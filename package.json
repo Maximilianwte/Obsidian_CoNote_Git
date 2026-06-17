@@ -1,0 +1,30 @@
+{
+  "name": "conote-shared-folder",
+  "version": "0.1.0",
+  "description": "Obsidian plugin to share a folder via Google Cloud Storage with async sync and manual conflict resolution.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "typecheck": "tsc -noEmit -skipLibCheck"
+  },
+  "keywords": [
+    "obsidian",
+    "gcs",
+    "sync",
+    "collaboration"
+  ],
+  "author": "Maximilian Witte",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/diff": "^5.2.1",
+    "@types/node": "^20.11.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.20.0",
+    "obsidian": "^1.4.11",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "diff": "^5.2.0"
+  }
+}

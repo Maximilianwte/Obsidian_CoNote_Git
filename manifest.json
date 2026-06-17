@@ -1,0 +1,9 @@
+{
+  "id": "conote-shared-folder",
+  "name": "Conote Shared Folder",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Share and collaboratively edit a folder with a small group via a Google Cloud Storage bucket. Async sync with manual, GitHub-style conflict resolution.",
+  "author": "Maximilian Witte",
+  "isDesktopOnly": true
+}

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conote — Completing sign-in…</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: flex; align-items: center;
+           justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+    .card { background: white; border-radius: 12px; padding: 40px 48px; max-width: 420px;
+            text-align: center; box-shadow: 0 2px 16px rgba(0,0,0,.1); }
+    h1 { margin: 0 0 12px; font-size: 1.4rem; }
+    p  { color: #555; margin: 0 0 20px; line-height: 1.5; }
+    .status { font-weight: 600; color: #333; }
+    .error  { color: #c0392b; }
+    .success { color: #27ae60; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Conote</h1>
+  <p id="msg" class="status">Completing sign-in…</p>
+</div>
+
+<!-- Firebase SDK from CDN — replace with your own project config values below -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+  import { getAuth, isSignInWithEmailLink, signInWithEmailLink }
+    from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+  // ── REPLACE these values with your Firebase project config ──────────────────
+  const firebaseConfig = {
+  apiKey: "AIzaSyC460NBtszdj4z32xI72-dpWp0Q-u8aiZc",
+  authDomain: "obsidian-conote.firebaseapp.com",
+  projectId: "obsidian-conote",
+  storageBucket: "obsidian-conote.firebasestorage.app",
+  messagingSenderId: "512956519874",
+  appId: "1:512956519874:web:e3f2e8145c0ea301c2f25b"
+};
+  // ────────────────────────────────────────────────────────────────────────────
+
+  const msg = document.getElementById("msg");
+
+  function fail(text) {
+    msg.textContent = text;
+    msg.className = "status error";
+  }
+
+  function succeed(text) {
+    msg.textContent = text;
+    msg.className = "status success";
+  }
+
+  try {
+    const app  = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    const params = new URLSearchParams(window.location.search);
+    const port   = params.get("port");
+    const email  = params.get("email");
+
+    if (!port || !email) {
+      fail("Invalid link — missing port or email. Please retry from Obsidian.");
+    } else if (!isSignInWithEmailLink(auth, window.location.href)) {
+      fail("This link is not a valid sign-in link.");
+    } else {
+      const userCred = await signInWithEmailLink(auth, email, window.location.href);
+      const idToken  = await userCred.user.getIdToken();
+      const refresh  = userCred.user.refreshToken;
+      const uid      = userCred.user.uid;
+
+      // Hand the tokens back to the plugin's local callback listener.
+      const callbackUrl =
+        `http://localhost:${port}/callback` +
+        `?idToken=${encodeURIComponent(idToken)}` +
+        `&refreshToken=${encodeURIComponent(refresh)}` +
+        `&uid=${encodeURIComponent(uid)}` +
+        `&email=${encodeURIComponent(email)}`;
+
+      await fetch(callbackUrl).catch(() => {
+        // If the plugin closed the listener, that's fine — we still show success.
+      });
+
+      succeed("Signed in! You can close this tab and return to Obsidian.");
+    }
+  } catch (err) {
+    fail(`Sign-in error: ${err?.message ?? err}`);
+  }
+</script>
+</body>
+</html>

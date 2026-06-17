@@ -1,0 +1,163 @@
+/* Conote Shared Folder — merge modal styles */
+
+.conote-merge-modal {
+  width: min(95vw, 1100px);
+}
+
+.conote-merge-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.conote-merge-header {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.conote-merge-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.conote-merge-pane {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.conote-merge-pane-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  font-weight: 600;
+  background: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.conote-merge-diff {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 38vh;
+  overflow: auto;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.conote-diff-line {
+  display: block;
+  padding: 0 4px;
+  border-radius: 2px;
+}
+
+.conote-diff-added {
+  background: rgba(46, 160, 67, 0.18);
+}
+
+.conote-diff-removed {
+  background: rgba(248, 81, 73, 0.18);
+}
+
+.conote-merge-result-title {
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.conote-merge-result {
+  width: 100%;
+  min-height: 28vh;
+  resize: vertical;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  padding: 8px 10px;
+}
+
+.conote-merge-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.conote-mapping-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.conote-mapping-row input {
+  flex: 1;
+}
+
+/* Auth modal */
+.conote-auth-desc {
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+.conote-auth-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.conote-auth-email {
+  flex: 1;
+}
+.conote-auth-status {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  margin: 0;
+}
+.conote-auth-status.error {
+  color: var(--text-error);
+}
+
+/* Shares modal */
+.conote-shares-loading {
+  color: var(--text-muted);
+}
+.conote-shares-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.conote-shares-create {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.conote-shares-create input {
+  flex: 1;
+}
+.conote-share-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  gap: 8px;
+}
+.conote-share-info {
+  flex: 1;
+  min-width: 0;
+}
+.conote-share-meta {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.conote-share-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.conote-share-badge {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: var(--font-ui-smaller);
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+}
