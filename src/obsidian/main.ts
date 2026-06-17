@@ -58,6 +58,11 @@ export default class ConotePlugin extends Plugin {
         }
       }
       this.restartSync();
+      this.decorateFolders();
+      // Re-decorate whenever the file explorer re-renders
+      this.registerEvent(
+        this.app.workspace.on("layout-change", () => this.decorateFolders())
+      );
     });
   }
 
@@ -65,6 +70,7 @@ export default class ConotePlugin extends Plugin {
     this.clearPull();
     for (const t of this.pushTimers.values()) window.clearTimeout(t);
     this.pushTimers.clear();
+    this.clearFolderBadges();
   }
 
   // ── Persistence ───────────────────────────────────────────────────────────
@@ -82,6 +88,7 @@ export default class ConotePlugin extends Plugin {
   async saveSettings(): Promise<void> {
     await this.savePersisted();
     this.rebuildEngine();
+    this.decorateFolders();
   }
 
   // ── Engine ────────────────────────────────────────────────────────────────
@@ -278,5 +285,30 @@ export default class ConotePlugin extends Plugin {
     this.statusEl.setText(state === "syncing" ? "Conote ⟳" : "Conote ✓");
     this.statusEl.title =
       state === "syncing" ? "Conote: syncing…" : "Conote: idle";
+  }
+
+  // ── Folder badges ─────────────────────────────────────────────────────────
+
+  private clearFolderBadges(): void {
+    document.querySelectorAll(".conote-folder-badge").forEach((el) => el.remove());
+  }
+
+  private decorateFolders(): void {
+    this.clearFolderBadges();
+    const leaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
+    if (!leaf) return;
+    const view = leaf.view as unknown as {
+      fileItems: Record<string, { el: HTMLElement }>;
+    };
+    if (!view.fileItems) return;
+
+    for (const mapping of this.settings.mappings) {
+      const item = view.fileItems[mapping.localFolder];
+      if (!item?.el) continue;
+      const titleEl = item.el.querySelector(".nav-folder-title-content");
+      if (!titleEl || titleEl.querySelector(".conote-folder-badge")) continue;
+      const badge = createEl("span", { cls: "conote-folder-badge", text: "🌐" });
+      titleEl.prepend(badge);
+    }
   }
 }
