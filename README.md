@@ -1,19 +1,20 @@
 # CoNote Git
 
-**Collaborate on Obsidian notes through GitHub — your data, your repo, no middleman.**
+**Collaborate on Obsidian notes through GitHub — super simple, full data ownership, free.**
 
 CoNote Git syncs individual vault subfolders with collaborators automatically. No manual commits, no subscriptions, no servers. Just a GitHub repo you already own.
 
+You don't need to link a full vault, just where ever you want to collaborate in your Obsidian!
+
 ---
 
-## Your data stays yours
+## Super simple & full data ownership
 
 Most collaboration tools route your notes through someone else's servers. CoNote Git doesn't exist in the middle — your notes go directly from your vault to a GitHub repo you control, and to your collaborators' vaults. That's it.
 
-- **Full ownership.** Your notes live in a GitHub repo that belongs to you. Delete the plugin tomorrow and your notes are still there, as plain git history.
+- **Simple.** Your notes live in a GitHub repo that belongs to you. Delete the plugin tomorrow and your notes are still there, as plain git history.
 - **Full privacy.** Use a private repo and nobody outside your collaborators can see anything. No analytics, no telemetry, no cloud accounts beyond GitHub.
 - **Free forever.** GitHub private repos are free. The plugin is free and open source. There's nothing to pay for.
-- **No infrastructure.** No server to deploy, no database to manage, no API keys to rotate. If GitHub is up, sync works.
 
 ---
 
