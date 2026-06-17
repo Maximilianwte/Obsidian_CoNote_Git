@@ -37,6 +37,8 @@ Your vault/
 
 No raw conflict markers ever appear in your notes.
 
+[!Screenshot_1.png]
+
 ---
 
 ## Why not Obsidian Git?
