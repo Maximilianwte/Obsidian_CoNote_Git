@@ -37,7 +37,9 @@ Your vault/
 
 No raw conflict markers ever appear in your notes.
 
-[!Screenshot_1.png]
+![CoNote Git](Screenshot_1.png)
+
+
 
 ---
 
