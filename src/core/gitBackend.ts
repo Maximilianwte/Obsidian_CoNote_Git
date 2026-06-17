@@ -108,7 +108,7 @@ export class GitBackend implements IGitBackend {
         });
       }
       return []; // clean merge
-    } catch (err) {
+    } catch {
       // isomorphic-git throws on merge conflict; fall through to parse conflicts.
       const conflicted = await this.findConflictedFiles(dir, gitdir, mapping);
       return conflicted;

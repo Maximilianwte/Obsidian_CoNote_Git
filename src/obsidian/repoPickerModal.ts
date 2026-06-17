@@ -50,7 +50,7 @@ export class RepoPickerModal extends Modal {
             Accept: "application/vnd.github.v3+json",
           },
         });
-        const batch: GithubRepo[] = res.json;
+        const batch = res.json as GithubRepo[];
         this.repos.push(...batch);
         if (batch.length < 100) break;
       }

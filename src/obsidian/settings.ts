@@ -42,7 +42,7 @@ export class ConoteSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     // ── GitHub auth ───────────────────────────────────────────────────────────
-    containerEl.createEl("h2", { text: "GitHub" });
+    new Setting(containerEl).setName("GitHub").setHeading();
 
     const { pat, githubUsername } = this.plugin.settings;
     if (pat && githubUsername) {
@@ -98,7 +98,7 @@ export class ConoteSettingTab extends PluginSettingTab {
       );
 
     // ── Sync settings ─────────────────────────────────────────────────────────
-    containerEl.createEl("h2", { text: "Sync" });
+    new Setting(containerEl).setName("Sync").setHeading();
 
     new Setting(containerEl)
       .setName("Automatic sync")
@@ -147,7 +147,7 @@ export class ConoteSettingTab extends PluginSettingTab {
     );
 
     // ── Folder mappings ───────────────────────────────────────────────────────
-    containerEl.createEl("h2", { text: "Shared folders" });
+    new Setting(containerEl).setName("Shared folders").setHeading();
     containerEl.createEl("p", {
       text: "Each row maps a vault subfolder to a GitHub repository. The repo is cloned into the plugin's data directory so your vault stays clean.",
       cls: "setting-item-description",
@@ -164,9 +164,11 @@ export class ConoteSettingTab extends PluginSettingTab {
       });
       labelInput.value = mapping.label;
       labelInput.title = "Human-readable name";
-      labelInput.addEventListener("change", async () => {
-        mapping.label = labelInput.value.trim();
-        await this.plugin.saveSettings();
+      labelInput.addEventListener("change", () => {
+        void (async () => {
+          mapping.label = labelInput.value.trim();
+          await this.plugin.saveSettings();
+        })();
       });
 
       const localInput = row1.createEl("input", {
@@ -178,10 +180,10 @@ export class ConoteSettingTab extends PluginSettingTab {
       localInput.title = "Click to browse vault folders";
       localInput.readOnly = true;
       localInput.addEventListener("click", () => {
-        new FolderPickerModal(this.app, async (path) => {
+        new FolderPickerModal(this.app, (path) => {
           mapping.localFolder = normalizePath(path);
           localInput.value = mapping.localFolder;
-          await this.plugin.saveSettings();
+          void this.plugin.saveSettings();
         }).open();
       });
 
@@ -200,10 +202,10 @@ export class ConoteSettingTab extends PluginSettingTab {
           new Notice("CoNote Git: add your GitHub PAT first.");
           return;
         }
-        new RepoPickerModal(this.app, this.plugin.settings.pat, async (url) => {
+        new RepoPickerModal(this.app, this.plugin.settings.pat, (url) => {
           mapping.repoUrl = url;
           repoInput.value = url;
-          await this.plugin.saveSettings();
+          void this.plugin.saveSettings();
         }).open();
       });
 
@@ -212,16 +214,16 @@ export class ConoteSettingTab extends PluginSettingTab {
         placeholder: "main",
       });
       branchInput.value = mapping.branch;
-      branchInput.style.maxWidth = "80px";
+      branchInput.addClass("conote-branch-input");
       branchInput.title = "Branch";
-      branchInput.addEventListener("change", async () => {
+      branchInput.addEventListener("change", () => {
         mapping.branch = branchInput.value.trim() || "main";
-        await this.plugin.saveSettings();
+        void this.plugin.saveSettings();
       });
 
       const cloneBtn = row2.createEl("button", { text: "Clone / init" });
       cloneBtn.title = "Clone the repo (or re-verify if already cloned)";
-      cloneBtn.addEventListener("click", async () => {
+      cloneBtn.addEventListener("click", () => void (async () => {
         if (!this.plugin.settings.pat) {
           new Notice("Conote: add your GitHub PAT first.");
           return;
@@ -240,13 +242,12 @@ export class ConoteSettingTab extends PluginSettingTab {
           cloneBtn.disabled = false;
           cloneBtn.textContent = "Clone / init";
         }
-      });
+      })());
 
       const removeBtn = row2.createEl("button", { text: "Remove" });
-      removeBtn.addEventListener("click", async () => {
+      removeBtn.addEventListener("click", () => {
         this.plugin.settings.mappings.splice(i, 1);
-        await this.plugin.saveSettings();
-        this.display();
+        void this.plugin.saveSettings().then(() => this.display());
       });
     });
 

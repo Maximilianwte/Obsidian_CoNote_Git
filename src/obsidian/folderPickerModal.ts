@@ -44,7 +44,7 @@ export class FolderPickerModal extends Modal {
       text: "Create & select",
       cls: "mod-cta",
     });
-    createBtn.addEventListener("click", async () => {
+    createBtn.addEventListener("click", () => void (async () => {
       const path = newInput.value.trim();
       if (!path) return;
       try {
@@ -54,7 +54,7 @@ export class FolderPickerModal extends Modal {
       }
       this.onSelect(path);
       this.close();
-    });
+    })());
     newInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") createBtn.click();
     });

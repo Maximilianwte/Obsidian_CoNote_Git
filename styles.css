@@ -140,13 +140,18 @@
   padding: 16px 0;
 }
 
-/* Settings — clickable picker inputs */
-.conote-picker-trigger {
-  cursor: pointer !important;
-  background: var(--background-secondary) !important;
+/* Settings — branch input width */
+.conote-branch-input {
+  max-width: 80px;
 }
-.conote-picker-trigger:hover {
-  background: var(--background-modifier-hover) !important;
+
+/* Settings — clickable picker inputs */
+.conote-mapping-block .conote-picker-trigger {
+  cursor: pointer;
+  background: var(--background-secondary);
+}
+.conote-mapping-block .conote-picker-trigger:hover {
+  background: var(--background-modifier-hover);
 }
 
 /* Picker modals — shared */

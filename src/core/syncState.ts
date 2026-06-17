@@ -31,11 +31,7 @@ export function isBinary(data: Uint8Array): boolean {
 export function parseConflictMarkers(
   text: string
 ): { ours: string; theirs: string } | null {
-  const START = /^<{7} /m;
-  const SEP   = /^={7}$/m;
-  const END   = /^>{7} /m;
-
-  if (!START.test(text)) return null;
+  if (!/^<{7} /m.test(text)) return null;
 
   const enc = new TextEncoder();
   const lines = text.split("\n");

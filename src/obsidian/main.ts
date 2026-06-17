@@ -98,7 +98,7 @@ export default class ConotePlugin extends Plugin {
   private reposBasePath(): string {
     return nodePath.join(
       this.vaultBasePath(),
-      ".obsidian",
+      this.app.vault.configDir,
       "plugins",
       "conote-git",
       "repos"

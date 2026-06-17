@@ -6,7 +6,6 @@ import type { IGitBackend, SyncStateStore } from "./fileStore";
 import type {
   Conflict,
   GitFolderMapping,
-  MappingSyncState,
   SyncEventHandler,
   SyncStateMap,
 } from "./types";

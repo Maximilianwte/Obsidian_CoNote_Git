@@ -1,7 +1,9 @@
 import { App, Modal, Notice, requestUrl } from "obsidian";
 
-// electron is an external provided by Obsidian's runtime — not bundled
-const { shell } = (window as typeof window & { require: (m: string) => { shell: { openExternal(url: string): Promise<void> } } }).require("electron");
+interface ElectronShell { openExternal(url: string): Promise<void> }
+interface Electron { shell: ElectronShell }
+// electron is provided by Obsidian's Electron runtime — not bundled
+const { shell } = (window.require as (m: "electron") => Electron)("electron");
 
 const CLIENT_ID = "Ov23liMBmfkdhXSC9bEP";
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
