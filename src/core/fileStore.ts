@@ -1,64 +1,93 @@
-// Injected interfaces that decouple core/ from any specific runtime.
-// Obsidian provides a VaultFileStore; an MCP server would provide a DiskFileStore.
+// Injected interfaces — decouple core/ from any specific runtime.
+// Obsidian provides VaultFileStore + PluginSyncStateStore.
+// A future MCP server provides DiskFileStore + JsonSyncStateStore.
 
-import type { RemoteFile, RemoteObject, SyncStateMap } from "./types";
+import type { GitFolderMapping, SyncStateMap } from "./types";
 
-/**
- * Structural interface for the remote storage layer. Both GcsClient (v1/MCP,
- * talks to GCS directly) and ApiClient (v2, talks to the Cloud Function proxy)
- * satisfy this shape so SyncEngine doesn't care which one it gets.
- */
-export interface IGcsClient {
-  list(prefix: string): Promise<RemoteObject[]>;
-  download(objectName: string): Promise<RemoteFile | null>;
-  getGeneration(objectName: string): Promise<string | null>;
-  upload(
-    objectName: string,
-    data: Uint8Array,
-    ifGenerationMatch: string,
-    author?: string,
-    contentType?: string
-  ): Promise<string>;
-  delete(objectName: string, ifGenerationMatch?: string): Promise<void>;
-}
+// ── Local file system ─────────────────────────────────────────────────────────
 
-/** A single file listed from the local store. */
 export interface LocalFile {
   /** Vault-relative path, forward slashes, no leading slash. */
   path: string;
 }
 
-/** Abstraction over the local file system (vault, disk, memory, ...). */
 export interface FileStore {
-  /** List all files under a folder (recursive), vault-relative paths. */
   list(folder: string): Promise<LocalFile[]>;
-  /** Read raw bytes; returns null if the file does not exist. */
   read(path: string): Promise<Uint8Array | null>;
-  /** Create/overwrite a file with raw bytes, creating parent folders. */
   write(path: string, data: Uint8Array): Promise<void>;
-  /** Delete a file; no-op if it does not exist. */
   delete(path: string): Promise<void>;
-  /** True if the path exists. */
   exists(path: string): Promise<boolean>;
 }
 
-/** Persists the per-file sync-state map (Obsidian: plugin data; MCP: a JSON file). */
+// ── Sync state persistence ────────────────────────────────────────────────────
+
 export interface SyncStateStore {
   load(): Promise<SyncStateMap>;
   save(state: SyncStateMap): Promise<void>;
 }
 
+// ── Git backend (the key seam for MCP reuse) ─────────────────────────────────
+
 /**
- * Minimal HTTP response shape, modeled on Obsidian's requestUrl. The injected
- * HTTP function never throws on non-2xx — callers inspect `status`.
+ * Abstraction over isomorphic-git operations. SyncEngine depends only on this
+ * interface — the concrete GitBackend (src/core/gitBackend.ts) can be swapped
+ * for a mock or a different implementation without touching the engine.
+ *
+ * MCP path: a future MCP server imports GitBackend, provides a DiskFileStore,
+ * and exposes pushAll/pullAll as MCP tools. Claude appears in git history as
+ * just another author.
  */
+export interface IGitBackend {
+  /**
+   * Ensure the repo is ready: clone if the gitdir doesn't exist yet, or verify
+   * the remote URL matches if it does. Must be called before any other method.
+   */
+  init(mapping: GitFolderMapping, pat: string): Promise<void>;
+
+  /**
+   * Fetch from origin and attempt a merge into the worktree. Returns the vault-
+   * relative paths of any files that ended up with conflict markers (i.e. the
+   * merge could not complete automatically).
+   */
+  pull(mapping: GitFolderMapping, pat: string): Promise<string[]>;
+
+  /**
+   * Stage all changes in the worktree, commit, and push. Returns false (no-op)
+   * if the worktree is clean. Throws on push failure (e.g. non-fast-forward —
+   * caller should pull first and retry).
+   */
+  push(
+    mapping: GitFolderMapping,
+    pat: string,
+    author: string,
+    message?: string
+  ): Promise<boolean>;
+
+  /**
+   * After the user resolves a conflict: write the merged content, stage the
+   * specific file, commit, and push.
+   */
+  resolveAndPush(
+    mapping: GitFolderMapping,
+    pat: string,
+    localPath: string,
+    mergedContent: Uint8Array,
+    author: string
+  ): Promise<void>;
+
+  /** True if the worktree has uncommitted changes (staged or unstaged). */
+  isDirty(mapping: GitFolderMapping): Promise<boolean>;
+
+  /** SHA of the current HEAD commit, or null if the repo has no commits yet. */
+  headSha(mapping: GitFolderMapping): Promise<string | null>;
+}
+
+// ── HTTP transport (kept for potential future use, e.g. GitHub API calls) ────
+
 export interface HttpResponse {
   status: number;
-  /** Decoded text body (may be empty for binary). */
   text: string;
-  /** Raw body bytes. */
   arrayBuffer: ArrayBuffer;
-  /** Response headers, lowercased keys. */
   headers: Record<string, string>;
 }
 
@@ -66,9 +95,7 @@ export interface HttpRequest {
   url: string;
   method?: string;
   headers?: Record<string, string>;
-  /** Request body: string or raw bytes. */
   body?: string | ArrayBuffer | Uint8Array;
 }
 
-/** Pluggable HTTP transport: Obsidian's requestUrl, or Node fetch/https. */
 export type HttpFn = (req: HttpRequest) => Promise<HttpResponse>;

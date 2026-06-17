@@ -5,9 +5,8 @@ import type { Conflict } from "../core/types";
 type ResolveFn = (merged: string) => void | Promise<void>;
 
 /**
- * GitHub-style conflict resolver: shows the local and remote versions side by
- * side with line-level diff highlighting, plus an editable result pane the user
- * assembles and saves. Text-only (binary conflicts never reach this modal).
+ * Side-by-side conflict resolver. Shows local vs remote diffs and an editable
+ * merged result. Used for both manual invocation and the sync engine conflict flow.
  */
 export class MergeModal extends Modal {
   private readonly localText: string;
@@ -27,16 +26,15 @@ export class MergeModal extends Modal {
     this.remoteText = dec.decode(conflict.remoteContent);
   }
 
-  /** Promise-based variant for the re-resolution loop. Resolves to null on cancel. */
+  /** Promise-based helper for programmatic use. Resolves to null on cancel. */
   static openAsync(app: App, conflict: Conflict): Promise<string | null> {
     return new Promise((resolve) => {
-      const modal = new MergeModal(
+      new MergeModal(
         app,
         conflict,
         (merged) => resolve(merged),
         () => resolve(null)
-      );
-      modal.open();
+      ).open();
     });
   }
 
@@ -49,7 +47,7 @@ export class MergeModal extends Modal {
     const author = this.conflict.remoteAuthor || "someone else";
     contentEl.createEl("p", {
       cls: "conote-merge-header",
-      text: `${this.conflict.localPath} — you and ${author} both edited this. Assemble the final version below, then Save.`,
+      text: `${this.conflict.localPath} — you and ${author} both edited this file. Assemble the final version below, then save.`,
     });
 
     const panes = contentEl.createDiv({ cls: "conote-merge-panes" });
@@ -60,9 +58,7 @@ export class MergeModal extends Modal {
       cls: "conote-merge-result-title",
       text: "Merged result (editable)",
     });
-    this.resultEl = contentEl.createEl("textarea", {
-      cls: "conote-merge-result",
-    });
+    this.resultEl = contentEl.createEl("textarea", { cls: "conote-merge-result" });
     this.resultEl.value = this.localText;
 
     const buttons = contentEl.createDiv({ cls: "conote-merge-buttons" });
@@ -74,11 +70,9 @@ export class MergeModal extends Modal {
     });
     this.makeButton(buttons, "Append theirs below mine", () => {
       this.resultEl.value =
-        this.localText.replace(/\s*$/, "") +
-        "\n\n<<<<<<< theirs >>>>>>>\n\n" +
-        this.remoteText;
+        this.localText.replace(/\s*$/, "") + "\n\n" + this.remoteText;
     });
-    const save = this.makeButton(buttons, "Save & upload", () => this.save());
+    const save = this.makeButton(buttons, "Save & push", () => void this.save());
     save.addClass("mod-cta");
     this.makeButton(buttons, "Cancel", () => this.close());
   }
@@ -93,25 +87,22 @@ export class MergeModal extends Modal {
     head.createSpan({ text: title });
     const copyBtn = head.createEl("button", { text: "Copy" });
     copyBtn.addEventListener("click", () => {
-      const txt = side === "local" ? this.localText : this.remoteText;
-      void navigator.clipboard.writeText(txt);
+      void navigator.clipboard.writeText(
+        side === "local" ? this.localText : this.remoteText
+      );
       new Notice("Copied to clipboard");
     });
 
     const pre = pane.createEl("pre", { cls: "conote-merge-diff" });
-    // diffLines(remote, local): "added" = present in local only, "removed" = remote only.
+    // diffLines(base, compare): added = present only in compare
     const parts = diffLines(this.remoteText, this.localText);
     for (const part of parts) {
+      if (part.added && side === "remote") continue;
+      if (part.removed && side === "local") continue;
       let cls = "conote-diff-line";
-      if (part.added) {
-        if (side === "remote") continue; // not in remote
-        cls += " conote-diff-added";
-      } else if (part.removed) {
-        if (side === "local") continue; // not in local
-        cls += " conote-diff-removed";
-      }
-      const span = pre.createEl("span", { cls });
-      span.setText(part.value);
+      if (part.added) cls += " conote-diff-added";
+      else if (part.removed) cls += " conote-diff-removed";
+      pre.createEl("span", { cls }).setText(part.value);
     }
   }
 
@@ -129,7 +120,8 @@ export class MergeModal extends Modal {
     this.settled = true;
     const merged = this.resultEl.value;
     this.close();
-    await this.onResolve(merged);
+    const result = this.onResolve(merged);
+    if (result instanceof Promise) await result;
   }
 
   onClose(): void {

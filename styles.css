@@ -1,4 +1,4 @@
-/* Conote Shared Folder — merge modal styles */
+/* CoNote Git — merge modal styles */
 
 .conote-merge-modal {
   width: min(95vw, 1100px);
@@ -94,70 +94,147 @@
   flex: 1;
 }
 
-/* Auth modal */
-.conote-auth-desc {
-  color: var(--text-muted);
-  margin-bottom: 16px;
+/* Settings — multi-row mapping block */
+.conote-mapping-block {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
 }
-.conote-auth-form {
+
+/* Device flow modal */
+.conote-device-status,
+.conote-device-waiting {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  margin: 8px 0;
+}
+.conote-device-code {
+  font-family: var(--font-monospace);
+  font-size: 2em;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-align: center;
+  padding: 18px;
+  margin: 12px 0;
+  background: var(--background-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+}
+.conote-device-btn-row {
   display: flex;
   gap: 8px;
+  justify-content: center;
   margin-bottom: 12px;
 }
-.conote-auth-email {
-  flex: 1;
+.conote-device-success {
+  color: var(--color-green);
+  font-size: var(--font-ui-medium);
+  text-align: center;
+  padding: 24px 0;
 }
-.conote-auth-status {
+.conote-device-error {
+  color: var(--text-error);
   font-size: var(--font-ui-small);
-  color: var(--text-muted);
-  margin: 0;
+  text-align: center;
+  padding: 16px 0;
 }
-.conote-auth-status.error {
+
+/* Settings — clickable picker inputs */
+.conote-picker-trigger {
+  cursor: pointer !important;
+  background: var(--background-secondary) !important;
+}
+.conote-picker-trigger:hover {
+  background: var(--background-modifier-hover) !important;
+}
+
+/* Picker modals — shared */
+.conote-picker-search {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.conote-picker-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.conote-picker-item {
+  padding: 5px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--background-modifier-border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.conote-picker-item:last-child {
+  border-bottom: none;
+}
+.conote-picker-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.conote-picker-empty,
+.conote-picker-loading,
+.conote-picker-error {
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  text-align: center;
+}
+.conote-picker-error {
   color: var(--text-error);
 }
 
-/* Shares modal */
-.conote-shares-loading {
-  color: var(--text-muted);
-}
-.conote-shares-empty {
-  color: var(--text-muted);
-  font-style: italic;
-}
-.conote-shares-create {
+/* Repo picker */
+.conote-picker-repo-header {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.conote-shares-create input {
-  flex: 1;
-}
-.conote-share-row {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--background-modifier-border);
   gap: 8px;
 }
-.conote-share-info {
-  flex: 1;
-  min-width: 0;
+.conote-picker-repo-name {
+  font-weight: 500;
 }
-.conote-share-meta {
+.conote-picker-repo-desc {
+  font-size: var(--font-ui-smaller);
   color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
 }
-.conote-share-actions {
-  display: flex;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.conote-share-badge {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  font-size: var(--font-ui-smaller);
+.conote-picker-badge {
+  font-size: 10px;
   padding: 1px 6px;
-  border-radius: 8px;
-  margin-left: 4px;
+  border-radius: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.conote-badge-private {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.conote-badge-public {
+  background: rgba(46, 160, 67, 0.2);
+  color: var(--color-green);
+}
+
+/* Create new / custom URL row */
+.conote-picker-new {
+  padding-top: 6px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.conote-picker-new-label {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  margin: 0 0 4px;
+}
+.conote-picker-new-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.conote-picker-new-input {
+  flex: 1;
 }

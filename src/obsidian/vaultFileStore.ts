@@ -2,7 +2,6 @@ import { App, TFile, TFolder, normalizePath } from "obsidian";
 import type { FileStore, LocalFile, SyncStateStore } from "../core/fileStore";
 import type { SyncStateMap } from "../core/types";
 
-/** FileStore backed by the Obsidian vault adapter (works for all file types). */
 export class VaultFileStore implements FileStore {
   constructor(private readonly app: App) {}
 
@@ -61,16 +60,11 @@ function toArrayBuffer(data: Uint8Array): ArrayBuffer {
   ) as ArrayBuffer;
 }
 
-/** SyncStateStore persisted inside the plugin's data.json under a single key. */
 export class PluginSyncStateStore implements SyncStateStore {
   constructor(
     private readonly load_: () => Promise<SyncStateMap>,
     private readonly save_: (s: SyncStateMap) => Promise<void>
   ) {}
-  load(): Promise<SyncStateMap> {
-    return this.load_();
-  }
-  save(state: SyncStateMap): Promise<void> {
-    return this.save_(state);
-  }
+  load(): Promise<SyncStateMap> { return this.load_(); }
+  save(state: SyncStateMap): Promise<void> { return this.save_(state); }
 }

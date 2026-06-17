@@ -1,10 +1,9 @@
-// Helpers around the per-file sync-state map, plus content hashing and path
-// mapping between local (vault-relative) paths and bucket object names.
+// Utilities that are backend-agnostic: hashing, binary detection, path helpers.
+// No GCS / git specifics here.
 
 import * as crypto from "crypto";
-import type { FolderMapping } from "./types";
 
-/** Stable content hash used to detect whether a file changed since last sync. */
+/** Stable content hash used to detect whether a file changed. */
 export function hashContent(data: Uint8Array): string {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
@@ -18,77 +17,60 @@ export function isBinary(data: Uint8Array): boolean {
   return false;
 }
 
-/** Guess a Content-Type from the file extension (text-friendly defaults). */
-export function contentTypeFor(path: string): string {
-  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-  switch (ext) {
-    case "md":
-      return "text/markdown; charset=utf-8";
-    case "txt":
-      return "text/plain; charset=utf-8";
-    case "json":
-      return "application/json; charset=utf-8";
-    case "png":
-      return "image/png";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "gif":
-      return "image/gif";
-    case "svg":
-      return "image/svg+xml";
-    case "pdf":
-      return "application/pdf";
-    default:
-      return "application/octet-stream";
-  }
-}
+/**
+ * Parse git conflict markers in text content and return the two sides.
+ * Returns null if no conflict markers are found.
+ *
+ * Standard git conflict block:
+ *   <<<<<<< HEAD
+ *   (ours)
+ *   =======
+ *   (theirs)
+ *   >>>>>>> branch-name
+ */
+export function parseConflictMarkers(
+  text: string
+): { ours: string; theirs: string } | null {
+  const START = /^<{7} /m;
+  const SEP   = /^={7}$/m;
+  const END   = /^>{7} /m;
 
-/** Normalize a folder path: strip leading/trailing slashes. */
-function normFolder(folder: string): string {
-  return folder.replace(/^\/+/, "").replace(/\/+$/, "");
-}
+  if (!START.test(text)) return null;
 
-/** Map a vault-relative local path to a bucket object name, or null if unmapped. */
-export function localToObject(
-  localPath: string,
-  mappings: FolderMapping[]
-): string | null {
-  for (const m of mappings) {
-    const local = normFolder(m.localFolder);
-    const prefix = normFolder(m.bucketPrefix);
-    if (localPath === local) continue; // the folder itself, not a file
-    if (local === "" || localPath.startsWith(local + "/")) {
-      const rel = local === "" ? localPath : localPath.slice(local.length + 1);
-      return prefix === "" ? rel : `${prefix}/${rel}`;
+  const enc = new TextEncoder();
+  const lines = text.split("\n");
+  const ourLines: string[] = [];
+  const theirLines: string[] = [];
+  let state: "before" | "ours" | "theirs" | "after" = "before";
+
+  for (const line of lines) {
+    if (state === "before" && line.startsWith("<<<<<<<")) {
+      state = "ours";
+    } else if (state === "ours" && line === "=======") {
+      state = "theirs";
+    } else if (state === "theirs" && line.startsWith(">>>>>>>")) {
+      state = "after";
+    } else if (state === "ours") {
+      ourLines.push(line);
+    } else if (state === "theirs") {
+      theirLines.push(line);
     }
   }
-  return null;
+
+  void enc; // kept to show intent; callers use TextEncoder themselves
+  if (state !== "after") return null;
+  return { ours: ourLines.join("\n"), theirs: theirLines.join("\n") };
 }
 
-/** Map a bucket object name back to a vault-relative local path, or null. */
-export function objectToLocal(
-  objectName: string,
-  mappings: FolderMapping[]
-): string | null {
-  for (const m of mappings) {
-    const local = normFolder(m.localFolder);
-    const prefix = normFolder(m.bucketPrefix);
-    if (prefix === "" || objectName.startsWith(prefix + "/")) {
-      const rel =
-        prefix === "" ? objectName : objectName.slice(prefix.length + 1);
-      return local === "" ? rel : `${local}/${rel}`;
-    }
-  }
-  return null;
+/** Vault-relative path → repo-relative path given a local folder root. */
+export function vaultToRepo(vaultPath: string, localFolder: string): string {
+  const prefix = localFolder === "" ? "" : localFolder + "/";
+  return vaultPath.startsWith(prefix)
+    ? vaultPath.slice(prefix.length)
+    : vaultPath;
 }
 
-/** Build a "keep both" sibling path for unmergeable (binary) conflicts. */
-export function conflictCopyPath(localPath: string, author: string): string {
-  const dot = localPath.lastIndexOf(".");
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const safeAuthor = author.replace(/[\\/:*?"<>|]/g, "_") || "remote";
-  const suffix = ` (conflict from ${safeAuthor} ${stamp})`;
-  if (dot <= localPath.lastIndexOf("/")) return localPath + suffix;
-  return localPath.slice(0, dot) + suffix + localPath.slice(dot);
+/** Repo-relative path → vault-relative path given a local folder root. */
+export function repoToVault(repoPath: string, localFolder: string): string {
+  return localFolder === "" ? repoPath : `${localFolder}/${repoPath}`;
 }

@@ -1,26 +1,34 @@
 import { App, PluginSettingTab, Setting, Notice, normalizePath } from "obsidian";
 import type ConotePlugin from "./main";
-import type { FirebaseCredential } from "../core/firebaseAuth";
-import type { FolderMappingV2 } from "../core/types";
+import type { GitFolderMapping } from "../core/types";
+import { FolderPickerModal } from "./folderPickerModal";
+import { RepoPickerModal } from "./repoPickerModal";
+import { DeviceFlowModal } from "./deviceFlowModal";
 
 export interface ConoteSettings {
-  // ── Auth (stored in plugin data, never shown as raw text) ────────────────
-  credential: FirebaseCredential | null;
-
-  // ── Folder mappings ───────────────────────────────────────────────────────
-  mappings: FolderMappingV2[];
-
-  // ── Sync ─────────────────────────────────────────────────────────────────
+  /** GitHub OAuth token (device flow). Stored in plugin data. */
+  pat: string;
+  /** GitHub username, resolved after sign-in. */
+  githubUsername: string;
+  /** Display name used in git commit author field. */
   author: string;
-  pollIntervalSeconds: number;
+  /** Folder→repo mappings. */
+  mappings: GitFolderMapping[];
+  /** Auto-push inactivity window in seconds. */
+  pushDebounceSeconds: number;
+  /** Pull interval in seconds. */
+  pullIntervalSeconds: number;
+  /** Whether automatic sync is enabled. */
   autoSync: boolean;
 }
 
 export const DEFAULT_SETTINGS: ConoteSettings = {
-  credential: null,
-  mappings: [],
+  pat: "",
+  githubUsername: "",
   author: "",
-  pollIntervalSeconds: 15,
+  mappings: [],
+  pushDebounceSeconds: 10,
+  pullIntervalSeconds: 30,
   autoSync: true,
 };
 
@@ -33,43 +41,55 @@ export class ConoteSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    // ── Auth section ─────────────────────────────────────────────────────────
-    containerEl.createEl("h2", { text: "Account" });
+    // ── GitHub auth ───────────────────────────────────────────────────────────
+    containerEl.createEl("h2", { text: "GitHub" });
 
-    const cred = this.plugin.settings.credential;
-    if (cred) {
+    const { pat, githubUsername } = this.plugin.settings;
+    if (pat && githubUsername) {
       new Setting(containerEl)
-        .setName("Signed in")
-        .setDesc(`As ${cred.email}`)
+        .setName(`Connected as @${githubUsername}`)
+        .setDesc("Your token is stored locally and never uploaded.")
         .addButton((b) =>
           b.setButtonText("Sign out").onClick(async () => {
-            this.plugin.signOut();
+            this.plugin.settings.pat = "";
+            this.plugin.settings.githubUsername = "";
             await this.plugin.saveSettings();
             this.display();
-            new Notice("Conote: signed out.");
           })
         );
     } else {
       new Setting(containerEl)
-        .setName("Sign in")
+        .setName("Sign in with GitHub")
         .setDesc(
-          "Sign in with your email — a one-click magic link will be sent. No password needed."
+          "Opens github.com in your browser. You'll enter a short code to authorize CoNote Git. No password is shared with the plugin."
         )
         .addButton((b) =>
           b
-            .setButtonText("Sign in with email")
+            .setButtonText("Sign in with GitHub")
             .setCta()
-            .onClick(() => this.plugin.openAuthModal())
+            .onClick(() => {
+              new DeviceFlowModal(
+                this.app,
+                async (token, username) => {
+                  this.plugin.settings.pat = token;
+                  this.plugin.settings.githubUsername = username;
+                  if (!this.plugin.settings.author) {
+                    this.plugin.settings.author = username;
+                  }
+                  await this.plugin.saveSettings();
+                  this.display();
+                }
+              ).open();
+            })
         );
     }
 
-    // ── Display name ─────────────────────────────────────────────────────────
     new Setting(containerEl)
-      .setName("Your display name")
-      .setDesc("Shown as the author on changes you push.")
+      .setName("Display name")
+      .setDesc("Used as the git commit author name.")
       .addText((t) =>
         t
-          .setPlaceholder("Max")
+          .setPlaceholder("Max Mustermann")
           .setValue(this.plugin.settings.author)
           .onChange(async (v) => {
             this.plugin.settings.author = v.trim();
@@ -77,12 +97,12 @@ export class ConoteSettingTab extends PluginSettingTab {
           })
       );
 
-    // ── Sync ──────────────────────────────────────────────────────────────────
+    // ── Sync settings ─────────────────────────────────────────────────────────
     containerEl.createEl("h2", { text: "Sync" });
 
     new Setting(containerEl)
       .setName("Automatic sync")
-      .setDesc("Push on save and poll the bucket on an interval.")
+      .setDesc("Auto-push after inactivity, auto-pull on interval.")
       .addToggle((t) =>
         t.setValue(this.plugin.settings.autoSync).onChange(async (v) => {
           this.plugin.settings.autoSync = v;
@@ -92,15 +112,30 @@ export class ConoteSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Poll interval (seconds)")
-      .setDesc("How often to check for remote changes. Minimum 5.")
+      .setName("Push after inactivity (seconds)")
+      .setDesc("Commit and push this many seconds after the last edit in a synced folder.")
       .addText((t) =>
         t
-          .setValue(String(this.plugin.settings.pollIntervalSeconds))
+          .setValue(String(this.plugin.settings.pushDebounceSeconds))
           .onChange(async (v) => {
             const n = Number(v);
-            if (Number.isFinite(n) && n >= 5) {
-              this.plugin.settings.pollIntervalSeconds = Math.floor(n);
+            if (Number.isFinite(n) && n >= 3) {
+              this.plugin.settings.pushDebounceSeconds = Math.floor(n);
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Pull interval (seconds)")
+      .setDesc("How often to fetch and merge from GitHub.")
+      .addText((t) =>
+        t
+          .setValue(String(this.plugin.settings.pullIntervalSeconds))
+          .onChange(async (v) => {
+            const n = Number(v);
+            if (Number.isFinite(n) && n >= 10) {
+              this.plugin.settings.pullIntervalSeconds = Math.floor(n);
               await this.plugin.saveSettings();
               this.plugin.restartSync();
             }
@@ -111,54 +146,104 @@ export class ConoteSettingTab extends PluginSettingTab {
       b.setButtonText("Sync now").onClick(() => void this.plugin.syncNow())
     );
 
-    // ── Shared folders ───────────────────────────────────────────────────────
+    // ── Folder mappings ───────────────────────────────────────────────────────
     containerEl.createEl("h2", { text: "Shared folders" });
     containerEl.createEl("p", {
-      text: 'Map a local vault folder to a GCS prefix. Use "Manage shares" to create or join shared folders.',
+      text: "Each row maps a vault subfolder to a GitHub repository. The repo is cloned into the plugin's data directory so your vault stays clean.",
       cls: "setting-item-description",
     });
 
-    new Setting(containerEl).addButton((b) =>
-      b
-        .setButtonText("Manage shares…")
-        .onClick(() => this.plugin.openSharesModal())
-    );
-
     this.plugin.settings.mappings.forEach((mapping, i) => {
-      const row = containerEl.createDiv({ cls: "conote-mapping-row" });
+      const wrap = containerEl.createDiv({ cls: "conote-mapping-block" });
 
-      const local = row.createEl("input", {
+      const row1 = wrap.createDiv({ cls: "conote-mapping-row" });
+
+      const labelInput = row1.createEl("input", {
         type: "text",
-        placeholder: "Vault folder (e.g. Shared/ProjectX)",
+        placeholder: "Label (e.g. ProjectX)",
       });
-      local.value = mapping.localFolder;
-      local.title = "Local vault folder";
-      local.addEventListener("change", async () => {
-        mapping.localFolder = normalizePath(local.value.trim());
+      labelInput.value = mapping.label;
+      labelInput.title = "Human-readable name";
+      labelInput.addEventListener("change", async () => {
+        mapping.label = labelInput.value.trim();
         await this.plugin.saveSettings();
       });
 
-      const prefix = row.createEl("input", {
+      const localInput = row1.createEl("input", {
         type: "text",
-        placeholder: "GCS prefix (e.g. users/uid/ProjectX)",
+        placeholder: "Vault folder — click to browse",
+        cls: "conote-picker-trigger",
       });
-      prefix.value = mapping.gcsPrefix;
-      prefix.title = "GCS object prefix";
-      prefix.addEventListener("change", async () => {
-        mapping.gcsPrefix = prefix.value.trim().replace(/^\/+|\/+$/g, "");
+      localInput.value = mapping.localFolder;
+      localInput.title = "Click to browse vault folders";
+      localInput.readOnly = true;
+      localInput.addEventListener("click", () => {
+        new FolderPickerModal(this.app, async (path) => {
+          mapping.localFolder = normalizePath(path);
+          localInput.value = mapping.localFolder;
+          await this.plugin.saveSettings();
+        }).open();
+      });
+
+      const row2 = wrap.createDiv({ cls: "conote-mapping-row" });
+
+      const repoInput = row2.createEl("input", {
+        type: "text",
+        placeholder: "GitHub repo — click to browse",
+        cls: "conote-picker-trigger",
+      });
+      repoInput.value = mapping.repoUrl;
+      repoInput.title = "Click to browse GitHub repositories";
+      repoInput.readOnly = true;
+      repoInput.addEventListener("click", () => {
+        if (!this.plugin.settings.pat) {
+          new Notice("CoNote Git: add your GitHub PAT first.");
+          return;
+        }
+        new RepoPickerModal(this.app, this.plugin.settings.pat, async (url) => {
+          mapping.repoUrl = url;
+          repoInput.value = url;
+          await this.plugin.saveSettings();
+        }).open();
+      });
+
+      const branchInput = row2.createEl("input", {
+        type: "text",
+        placeholder: "main",
+      });
+      branchInput.value = mapping.branch;
+      branchInput.style.maxWidth = "80px";
+      branchInput.title = "Branch";
+      branchInput.addEventListener("change", async () => {
+        mapping.branch = branchInput.value.trim() || "main";
         await this.plugin.saveSettings();
       });
 
-      if (mapping.shareId) {
-        row.createEl("span", {
-          text: `shared`,
-          cls: "conote-share-badge",
-        });
-      }
+      const cloneBtn = row2.createEl("button", { text: "Clone / init" });
+      cloneBtn.title = "Clone the repo (or re-verify if already cloned)";
+      cloneBtn.addEventListener("click", async () => {
+        if (!this.plugin.settings.pat) {
+          new Notice("Conote: add your GitHub PAT first.");
+          return;
+        }
+        cloneBtn.disabled = true;
+        cloneBtn.textContent = "Cloning…";
+        try {
+          await this.plugin.initMapping(mapping);
+          new Notice(`Conote: "${mapping.label || mapping.repoUrl}" ready.`);
+        } catch (err) {
+          new Notice(
+            `Conote: clone failed — ${err instanceof Error ? err.message : String(err)}`,
+            8000
+          );
+        } finally {
+          cloneBtn.disabled = false;
+          cloneBtn.textContent = "Clone / init";
+        }
+      });
 
-      const remove = row.createEl("button", { text: "×" });
-      remove.title = "Remove this mapping";
-      remove.addEventListener("click", async () => {
+      const removeBtn = row2.createEl("button", { text: "Remove" });
+      removeBtn.addEventListener("click", async () => {
         this.plugin.settings.mappings.splice(i, 1);
         await this.plugin.saveSettings();
         this.display();
@@ -166,16 +251,20 @@ export class ConoteSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl).addButton((b) =>
-      b.setButtonText("Add folder mapping").onClick(async () => {
-        const uid = this.plugin.getUid() ?? "uid";
-        this.plugin.settings.mappings.push({
-          localFolder: "",
-          gcsPrefix: `users/${uid}/`,
-          name: "",
-        });
-        await this.plugin.saveSettings();
-        this.display();
-      })
+      b
+        .setButtonText("Add folder mapping")
+        .setCta()
+        .onClick(async () => {
+          this.plugin.settings.mappings.push({
+            id: crypto.randomUUID(),
+            localFolder: "",
+            repoUrl: "",
+            branch: "main",
+            label: "",
+          });
+          await this.plugin.saveSettings();
+          this.display();
+        })
     );
   }
 }

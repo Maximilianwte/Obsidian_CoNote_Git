@@ -1,39 +1,34 @@
-// Sync engine: reconciles a set of mapped folders between the local FileStore and
-// a GCS bucket using object generations for optimistic concurrency. Pure core —
-// no Obsidian imports. Conflicts are surfaced as data via the event handler.
+// Sync engine v3 — git-backed. Much simpler than v1/v2 because git handles
+// all file tracking; the engine just orchestrates timing and surfaces conflicts.
+// No Obsidian imports — pure core, reusable by MCP server.
 
-import type { FileStore, IGcsClient, SyncStateStore } from "./fileStore";
-import { PreconditionFailedError } from "./gcs";
-import {
-  conflictCopyPath,
-  contentTypeFor,
-  hashContent,
-  isBinary,
-  localToObject,
-  objectToLocal,
-} from "./syncState";
+import type { IGitBackend, SyncStateStore } from "./fileStore";
 import type {
   Conflict,
-  FolderMapping,
-  RemoteObject,
+  GitFolderMapping,
+  MappingSyncState,
   SyncEventHandler,
   SyncStateMap,
 } from "./types";
+import { parseConflictMarkers } from "./syncState";
+import * as fs from "fs";
+import * as nodePath from "path";
 
 export interface SyncEngineConfig {
-  mappings: FolderMapping[];
-  /** Display name stored as object metadata for attribution. */
+  mappings: GitFolderMapping[];
+  pat: string;
   author: string;
 }
 
 export class SyncEngine {
   private state: SyncStateMap = {};
   private loaded = false;
-  private running = false;
+  private pushing = false;
+  private pulling = false;
 
   constructor(
-    private readonly gcs: IGcsClient,
-    private readonly files: FileStore,
+    private readonly backend: IGitBackend,
+    private readonly vaultBasePath: string,
     private readonly stateStore: SyncStateStore,
     private config: SyncEngineConfig,
     private readonly emit: SyncEventHandler
@@ -43,351 +38,195 @@ export class SyncEngine {
     this.config = config;
   }
 
+  // ── Public API ────────────────────────────────────────────────────────────
+
+  /** Push all dirty mappings. Called after debounce on file save. */
+  async pushAll(): Promise<void> {
+    if (this.pushing) return;
+    this.pushing = true;
+    try {
+      await this.ensureLoaded();
+      for (const mapping of this.config.mappings) {
+        await this.pushMapping(mapping);
+      }
+    } finally {
+      this.pushing = false;
+    }
+  }
+
+  /** Push a single mapping — used when we know exactly which folder changed. */
+  async pushMapping(mapping: GitFolderMapping): Promise<void> {
+    const entry = this.state[mapping.id];
+    if (entry?.hasConflicts) return; // block push until conflicts resolved
+    try {
+      const pushed = await this.backend.push(
+        mapping,
+        this.config.pat,
+        this.config.author
+      );
+      if (pushed) {
+        const sha = (await this.backend.headSha(mapping)) ?? "";
+        this.state[mapping.id] = { lastCommitSha: sha, hasConflicts: false };
+        await this.saveState();
+        await this.emit({ type: "pushed", mappingId: mapping.id, commitSha: sha });
+      }
+    } catch (err) {
+      // Non-fast-forward: someone else pushed first. Pull and let the next
+      // push cycle retry.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isNonFastForward(msg)) {
+        await this.pullMapping(mapping);
+      } else {
+        await this.emit({ type: "error", message: msg, mappingId: mapping.id });
+      }
+    }
+  }
+
+  /** Pull all mappings. Called on poll interval. */
+  async pullAll(): Promise<void> {
+    if (this.pulling) return;
+    this.pulling = true;
+    try {
+      await this.ensureLoaded();
+      for (const mapping of this.config.mappings) {
+        await this.pullMapping(mapping);
+      }
+    } finally {
+      this.pulling = false;
+    }
+  }
+
+  /** Pull a single mapping and surface any conflicts. */
+  async pullMapping(mapping: GitFolderMapping): Promise<void> {
+    try {
+      const conflictedPaths = await this.backend.pull(
+        mapping,
+        this.config.pat
+      );
+
+      if (conflictedPaths.length === 0) {
+        const sha = (await this.backend.headSha(mapping)) ?? "";
+        this.state[mapping.id] = { lastCommitSha: sha, hasConflicts: false };
+        await this.saveState();
+        await this.emit({ type: "pulled", mappingId: mapping.id, commitSha: sha });
+        return;
+      }
+
+      // Surface each conflicted file to the UI.
+      this.state[mapping.id] = {
+        lastCommitSha: this.state[mapping.id]?.lastCommitSha ?? "",
+        hasConflicts: true,
+      };
+      await this.saveState();
+
+      for (const vaultPath of conflictedPaths) {
+        await this.emitConflict(mapping, vaultPath);
+      }
+    } catch (err) {
+      await this.emit({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+        mappingId: mapping.id,
+      });
+    }
+  }
+
+  /**
+   * Called by the UI after the user resolves a conflict in the merge modal.
+   * Writes the merged content, commits, and pushes.
+   */
+  async resolveConflict(
+    conflict: Conflict,
+    mergedContent: Uint8Array
+  ): Promise<void> {
+    const mapping = this.config.mappings.find(
+      (m) => m.id === conflict.mappingId
+    );
+    if (!mapping) return;
+
+    // Repo-relative path from vault-relative.
+    const repoRelPath = conflict.localPath.startsWith(mapping.localFolder + "/")
+      ? conflict.localPath.slice(mapping.localFolder.length + 1)
+      : conflict.localPath;
+
+    await this.backend.resolveAndPush(
+      mapping,
+      this.config.pat,
+      repoRelPath,
+      mergedContent,
+      this.config.author
+    );
+
+    const sha = (await this.backend.headSha(mapping)) ?? "";
+    this.state[mapping.id] = { lastCommitSha: sha, hasConflicts: false };
+    await this.saveState();
+    await this.emit({ type: "pushed", mappingId: mapping.id, commitSha: sha });
+  }
+
+  /** Initialise all repos (clone if needed). Call on plugin load. */
+  async initAll(): Promise<void> {
+    for (const mapping of this.config.mappings) {
+      try {
+        await this.backend.init(mapping, this.config.pat);
+      } catch (err) {
+        await this.emit({
+          type: "error",
+          message: `Init failed for "${mapping.label}": ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          mappingId: mapping.id,
+        });
+      }
+    }
+  }
+
+  /** Init a single mapping — used when a new one is added in settings. */
+  async initMapping(mapping: GitFolderMapping): Promise<void> {
+    await this.backend.init(mapping, this.config.pat);
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
   private async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
     this.state = await this.stateStore.load();
     this.loaded = true;
   }
 
-  private async persist(): Promise<void> {
+  private async saveState(): Promise<void> {
     await this.stateStore.save(this.state);
   }
 
-  /** Push a single local file (used by the debounced save handler). */
-  async pushFile(localPath: string): Promise<void> {
-    await this.ensureLoaded();
-    const objectName = localToObject(localPath, this.config.mappings);
-    if (!objectName) return;
-    const entry = this.state[localPath];
-    if (entry?.conflicted) return; // don't clobber an unresolved conflict
-
-    const data = await this.files.read(localPath);
-    if (data === null) {
-      await this.pushDelete(localPath);
-      return;
-    }
-    const localHash = hashContent(data);
-    if (entry && entry.syncedHash === localHash) return; // nothing changed
-
-    const ifGen = entry?.remoteGeneration ?? "0";
+  private async emitConflict(
+    mapping: GitFolderMapping,
+    vaultPath: string
+  ): Promise<void> {
+    const absPath = nodePath.join(this.vaultBasePath, vaultPath);
+    let fileContent: Buffer;
     try {
-      const gen = await this.gcs.upload(
-        objectName,
-        data,
-        ifGen,
-        this.config.author,
-        contentTypeFor(localPath)
-      );
-      this.state[localPath] = { remoteGeneration: gen, syncedHash: localHash };
-      await this.persist();
-      await this.emit({ type: "pushed", localPath });
-    } catch (err) {
-      if (err instanceof PreconditionFailedError) {
-        await this.raiseConflict(localPath, objectName, data);
-      } else {
-        await this.emit({
-          type: "error",
-          message: String(err instanceof Error ? err.message : err),
-          localPath,
-        });
-      }
+      fileContent = fs.readFileSync(absPath);
+    } catch {
+      return; // file disappeared, skip
     }
-  }
+    const text = fileContent.toString("utf8");
+    const parsed = parseConflictMarkers(text);
+    if (!parsed) return;
 
-  /** Propagate a local deletion to the remote (only if remote is unchanged). */
-  async pushDelete(localPath: string): Promise<void> {
-    await this.ensureLoaded();
-    const objectName = localToObject(localPath, this.config.mappings);
-    if (!objectName) return;
-    const entry = this.state[localPath];
-    if (!entry || entry.conflicted) return;
-    await this.gcs.delete(objectName, entry.remoteGeneration);
-    delete this.state[localPath];
-    await this.persist();
-    await this.emit({ type: "deleted-remote", localPath });
-  }
-
-  /** Full reconcile of all mapped folders in both directions. */
-  async syncAll(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      await this.ensureLoaded();
-      const remote = await this.listRemote();
-      const localPaths = await this.listLocal();
-      const seenLocal = new Set<string>();
-
-      for (const localPath of localPaths) {
-        seenLocal.add(localPath);
-        await this.reconcileLocal(localPath, remote);
-      }
-      // Remote objects with no local counterpart.
-      for (const [objectName, obj] of remote) {
-        const localPath = objectToLocal(objectName, this.config.mappings);
-        if (!localPath || seenLocal.has(localPath)) continue;
-        await this.reconcileRemoteOnly(localPath, objectName, obj);
-      }
-      await this.persist();
-    } finally {
-      this.running = false;
-    }
-  }
-
-  // ---- reconciliation helpers ----
-
-  private async reconcileLocal(
-    localPath: string,
-    remote: Map<string, RemoteObject>
-  ): Promise<void> {
-    const objectName = localToObject(localPath, this.config.mappings);
-    if (!objectName) return;
-    const entry = this.state[localPath];
-    if (entry?.conflicted) return;
-
-    const data = await this.files.read(localPath);
-    if (data === null) return; // raced with a delete; handled elsewhere
-    const localHash = hashContent(data);
-    const obj = remote.get(objectName);
-
-    if (!obj) {
-      // Remote missing. Either brand-new local, or remote was deleted.
-      const ifGen = entry ? entry.remoteGeneration : "0";
-      if (entry && entry.syncedHash === localHash) {
-        // We synced before, remote deleted, local untouched -> delete local.
-        await this.files.delete(localPath);
-        delete this.state[localPath];
-        await this.emit({ type: "deleted-local", localPath });
-        return;
-      }
-      // New local file, or local changed after remote deletion -> (re)create.
-      await this.tryUpload(localPath, objectName, data, ifGen, localHash);
-      return;
-    }
-
-    if (!entry) {
-      // Both exist but we have no record. Adopt if identical, else conflict.
-      const remoteFile = await this.gcs.download(objectName);
-      if (!remoteFile) return;
-      if (hashContent(remoteFile.content) === localHash) {
-        this.state[localPath] = {
-          remoteGeneration: obj.generation,
-          syncedHash: localHash,
-        };
-      } else {
-        await this.raiseConflict(localPath, objectName, data, remoteFile);
-      }
-      return;
-    }
-
-    if (obj.generation === entry.remoteGeneration) {
-      // Remote unchanged since last sync.
-      if (localHash !== entry.syncedHash) {
-        await this.tryUpload(
-          localPath,
-          objectName,
-          data,
-          entry.remoteGeneration,
-          localHash
-        );
-      }
-      return;
-    }
-
-    // Remote changed since last sync.
-    if (localHash === entry.syncedHash) {
-      // Local untouched -> fast-forward pull.
-      await this.pullInto(localPath, objectName);
-    } else {
-      // Both changed -> conflict.
-      await this.raiseConflict(localPath, objectName, data);
-    }
-  }
-
-  private async reconcileRemoteOnly(
-    localPath: string,
-    objectName: string,
-    obj: RemoteObject
-  ): Promise<void> {
-    const entry = this.state[localPath];
-    if (entry?.conflicted) return;
-
-    if (!entry) {
-      // New remote file -> create locally.
-      await this.pullInto(localPath, objectName);
-      return;
-    }
-    // We had it locally but it's gone now -> local deletion.
-    if (obj.generation === entry.remoteGeneration) {
-      // Remote unchanged since last sync -> propagate delete.
-      await this.gcs.delete(objectName, entry.remoteGeneration);
-      delete this.state[localPath];
-      await this.emit({ type: "deleted-remote", localPath });
-    } else {
-      // Local deleted but remote changed -> resurrect locally to be safe.
-      await this.pullInto(localPath, objectName);
-    }
-  }
-
-  private async tryUpload(
-    localPath: string,
-    objectName: string,
-    data: Uint8Array,
-    ifGen: string,
-    localHash: string
-  ): Promise<void> {
-    try {
-      const gen = await this.gcs.upload(
-        objectName,
-        data,
-        ifGen,
-        this.config.author,
-        contentTypeFor(localPath)
-      );
-      this.state[localPath] = { remoteGeneration: gen, syncedHash: localHash };
-      await this.emit({ type: "pushed", localPath });
-    } catch (err) {
-      if (err instanceof PreconditionFailedError) {
-        await this.raiseConflict(localPath, objectName, data);
-      } else {
-        throw err;
-      }
-    }
-  }
-
-  private async pullInto(localPath: string, objectName: string): Promise<void> {
-    const remoteFile = await this.gcs.download(objectName);
-    if (!remoteFile) return;
-    await this.files.write(localPath, remoteFile.content);
-    this.state[localPath] = {
-      remoteGeneration: remoteFile.generation,
-      syncedHash: hashContent(remoteFile.content),
-    };
-    await this.emit({ type: "pulled", localPath });
-  }
-
-  private async raiseConflict(
-    localPath: string,
-    objectName: string,
-    localData: Uint8Array,
-    preloadedRemote?: { content: Uint8Array; generation: string; author?: string }
-  ): Promise<void> {
-    const remoteFile = preloadedRemote ?? (await this.gcs.download(objectName));
-    if (!remoteFile) {
-      // Remote vanished mid-flight; fall back to a plain create next round.
-      return;
-    }
-    const binary = isBinary(localData) || isBinary(remoteFile.content);
-
-    if (binary) {
-      // Can't line-merge: keep both, adopt the remote as the canonical file.
-      const copyPath = conflictCopyPath(
-        localPath,
-        remoteFile.author ?? "remote"
-      );
-      await this.files.write(copyPath, localData); // preserve our version
-      await this.files.write(localPath, remoteFile.content); // take remote
-      this.state[localPath] = {
-        remoteGeneration: remoteFile.generation,
-        syncedHash: hashContent(remoteFile.content),
-      };
-      await this.emit({ type: "pulled", localPath });
-      await this.emit({
-        type: "error",
-        message: `Binary conflict on ${localPath}; your version kept at ${copyPath}.`,
-        localPath,
-      });
-      return;
-    }
-
+    const enc = new TextEncoder();
     const conflict: Conflict = {
-      localPath,
-      objectName,
-      localContent: localData,
-      remoteContent: remoteFile.content,
-      remoteGeneration: remoteFile.generation,
-      remoteAuthor: remoteFile.author,
-      binary: false,
+      mappingId: mapping.id,
+      localPath: vaultPath,
+      localContent: enc.encode(parsed.ours),
+      remoteContent: enc.encode(parsed.theirs),
     };
-    const entry = this.state[localPath] ?? {
-      remoteGeneration: remoteFile.generation,
-      syncedHash: "",
-    };
-    entry.conflicted = true;
-    this.state[localPath] = entry;
-    await this.persist();
     await this.emit({ type: "conflict", conflict });
   }
+}
 
-  /**
-   * Apply a user-merged result for a previously-raised conflict: write it locally
-   * and upload with the conflict's remote generation as the precondition. If a
-   * newer remote write landed meanwhile, returns a fresh Conflict to re-resolve.
-   */
-  async resolveConflict(
-    conflict: Conflict,
-    mergedContent: Uint8Array
-  ): Promise<Conflict | null> {
-    await this.ensureLoaded();
-    const { localPath, objectName } = conflict;
-    await this.files.write(localPath, mergedContent);
-    const localHash = hashContent(mergedContent);
-    try {
-      const gen = await this.gcs.upload(
-        objectName,
-        mergedContent,
-        conflict.remoteGeneration,
-        this.config.author,
-        contentTypeFor(localPath)
-      );
-      this.state[localPath] = { remoteGeneration: gen, syncedHash: localHash };
-      await this.persist();
-      await this.emit({ type: "pushed", localPath });
-      return null;
-    } catch (err) {
-      if (err instanceof PreconditionFailedError) {
-        const remoteFile = await this.gcs.download(objectName);
-        if (!remoteFile) return null;
-        return {
-          localPath,
-          objectName,
-          localContent: mergedContent,
-          remoteContent: remoteFile.content,
-          remoteGeneration: remoteFile.generation,
-          remoteAuthor: remoteFile.author,
-          binary: false,
-        };
-      }
-      throw err;
-    }
-  }
-
-  /** Whether a path currently has an unresolved conflict. */
-  isConflicted(localPath: string): boolean {
-    return !!this.state[localPath]?.conflicted;
-  }
-
-  // ---- listing helpers ----
-
-  private async listRemote(): Promise<Map<string, RemoteObject>> {
-    const map = new Map<string, RemoteObject>();
-    const prefixes = new Set(
-      this.config.mappings.map((m) =>
-        m.bucketPrefix.replace(/^\/+/, "").replace(/\/+$/, "")
-      )
-    );
-    for (const prefix of prefixes) {
-      const objs = await this.gcs.list(prefix === "" ? "" : prefix + "/");
-      for (const o of objs) map.set(o.name, o);
-    }
-    return map;
-  }
-
-  private async listLocal(): Promise<string[]> {
-    const set = new Set<string>();
-    for (const m of this.config.mappings) {
-      const files = await this.files.list(m.localFolder);
-      for (const f of files) set.add(f.path);
-    }
-    return [...set];
-  }
+function isNonFastForward(msg: string): boolean {
+  return (
+    msg.includes("non-fast-forward") ||
+    msg.includes("rejected") ||
+    msg.includes("FETCH_HEAD")
+  );
 }
