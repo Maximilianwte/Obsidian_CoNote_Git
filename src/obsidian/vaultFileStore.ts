@@ -54,10 +54,9 @@ export class VaultFileStore implements FileStore {
 }
 
 function toArrayBuffer(data: Uint8Array): ArrayBuffer {
-  const buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-  // slice() on a SharedArrayBuffer returns SharedArrayBuffer; on ArrayBuffer returns ArrayBuffer.
-  // In Obsidian/Electron the underlying buffer is always a regular ArrayBuffer.
-  return buf as ArrayBuffer;
+  const ab = new ArrayBuffer(data.byteLength);
+  new Uint8Array(ab).set(data);
+  return ab;
 }
 
 export class PluginSyncStateStore implements SyncStateStore {
