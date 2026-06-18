@@ -303,12 +303,15 @@ export default class ConotePlugin extends Plugin {
     if (!view.fileItems) return;
 
     for (const mapping of this.settings.mappings) {
-      const item = view.fileItems[mapping.localFolder];
+      const folderPath = mapping.localFolder;
+      // Vault root maps to "/" in the file-explorer's fileItems index
+      const itemKey = folderPath === "" ? "/" : folderPath;
+      const item = view.fileItems[itemKey];
       if (!item?.el) continue;
-      const titleEl = item.el.querySelector(".nav-folder-title-content");
+      const titleEl = item.el.querySelector<HTMLElement>(".nav-folder-title");
       if (!titleEl || titleEl.querySelector(".conote-folder-badge")) continue;
       const badge = createEl("span", { cls: "conote-folder-badge", text: "🌐" });
-      titleEl.prepend(badge);
+      titleEl.appendChild(badge);
     }
   }
 }

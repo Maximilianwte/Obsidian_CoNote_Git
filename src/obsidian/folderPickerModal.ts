@@ -5,8 +5,11 @@ export class FolderPickerModal extends Modal {
   private listEl!: HTMLElement;
   private folders: string[];
 
+  private vaultName: string;
+
   constructor(app: App, private readonly onSelect: (path: string) => void) {
     super(app);
+    this.vaultName = app.vault.getName();
     this.folders = app.vault
       .getAllFolders(true)
       .map((f) => f.path)
@@ -69,9 +72,19 @@ export class FolderPickerModal extends Modal {
       ? this.folders.filter((p) => p.toLowerCase().includes(q))
       : this.folders;
 
-    if (hits.length === 0) {
+    // Vault root entry (always shown when query matches or is empty)
+    if (!q || this.vaultName.toLowerCase().includes(q)) {
+      const rootItem = this.listEl.createDiv({ cls: "conote-picker-item conote-picker-item-root" });
+      rootItem.createSpan({ text: `${this.vaultName} (entire vault)` });
+      rootItem.addEventListener("click", () => {
+        this.onSelect("");
+        this.close();
+      });
+    }
+
+    if (hits.length === 0 && (q && !this.vaultName.toLowerCase().includes(q))) {
       this.listEl.createEl("div", {
-        text: q ? "No matching folders." : "No subfolders in vault yet — create one below.",
+        text: "No matching folders.",
         cls: "conote-picker-empty",
       });
       return;

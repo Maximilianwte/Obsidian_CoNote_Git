@@ -140,13 +140,16 @@
   padding: 16px 0;
 }
 
-/* File explorer — synced folder badge */
+/* File explorer — synced folder badge (appended to .nav-folder-title flex row) */
 .conote-folder-badge {
-  margin-right: 4px;
-  font-size: 0.8em;
+  margin-left: auto;
+  padding-right: 6px;
+  font-size: 0.75em;
   filter: grayscale(1);
-  opacity: 0.7;
-  vertical-align: middle;
+  opacity: 0.6;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
 
 /* Settings — branch input width */
@@ -184,6 +187,10 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+.conote-picker-item-root {
+  font-weight: 500;
+  border-bottom: 2px solid var(--background-modifier-border);
 }
 .conote-picker-item:last-child {
   border-bottom: none;
