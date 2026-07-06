@@ -2,7 +2,7 @@
 
 **Collaborate on Obsidian notes through GitHub — super simple, full data ownership, completely free.**
 
-CoNote Git syncs individual vault subfolders with collaborators automatically. No manual commits, no subscriptions, no servers. Just a GitHub repo you already own.
+CoNote Git syncs individual vault folders with collaborators automatically. No manual commits, no subscriptions, no servers. Just a GitHub repo you already own.
 
 You don't need to link a full vault, just where ever you want to collaborate in your Obsidian!
 

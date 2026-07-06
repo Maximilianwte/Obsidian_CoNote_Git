@@ -123,11 +123,18 @@ export class GitBackend implements IGitBackend {
   ): Promise<boolean> {
     const { dir, gitdir } = this.paths(mapping);
 
-    // Stage everything in the worktree.
+    // Stage everything in the worktree. git.add does not stage deletions,
+    // so stage those explicitly — otherwise renamed/deleted notes reappear
+    // on collaborators' machines.
     await git.add({ fs, dir, gitdir, filepath: "." });
+    const statusMatrix = await git.statusMatrix({ fs, dir, gitdir });
+    for (const [filepath, head, workdir] of statusMatrix) {
+      if (head === 1 && workdir === 0) {
+        await git.remove({ fs, dir, gitdir, filepath });
+      }
+    }
 
     // Check if there's anything to commit.
-    const statusMatrix = await git.statusMatrix({ fs, dir, gitdir });
     const hasChanges = statusMatrix.some(
       ([, head, workdir, stage]) => head !== 1 || workdir !== 1 || stage !== 1
     );
@@ -218,8 +225,10 @@ export class GitBackend implements IGitBackend {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   paths(mapping: GitFolderMapping): { dir: string; gitdir: string } {
+    // localFolder "/" means the entire vault is the worktree.
+    const folder = mapping.localFolder === "/" ? "" : mapping.localFolder;
     return {
-      dir:    nodePath.join(this.vaultBasePath, mapping.localFolder),
+      dir:    nodePath.join(this.vaultBasePath, folder),
       gitdir: nodePath.join(this.reposBasePath, mapping.id),
     };
   }
@@ -258,10 +267,8 @@ export class GitBackend implements IGitBackend {
       if (isBinary(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength))) continue;
       const text = bytes.toString("utf8");
       if (parseConflictMarkers(text) !== null) {
-        const vaultPath = mapping.localFolder
-          ? `${mapping.localFolder}/${filepath}`
-          : filepath;
-        conflicted.push(vaultPath);
+        const folder = mapping.localFolder === "/" ? "" : mapping.localFolder;
+        conflicted.push(folder ? `${folder}/${filepath}` : filepath);
       }
     }
     return conflicted;

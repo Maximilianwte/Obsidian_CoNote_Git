@@ -24,6 +24,8 @@ export class SyncEngine {
   private loaded = false;
   private pushing = false;
   private pulling = false;
+  /** Last error emitted per mapping — avoids spamming the same notice every cycle. */
+  private lastPushError = new Map<string, string>();
 
   constructor(
     private readonly backend: IGitBackend,
@@ -55,6 +57,14 @@ export class SyncEngine {
 
   /** Push a single mapping — used when we know exactly which folder changed. */
   async pushMapping(mapping: GitFolderMapping): Promise<void> {
+    await this.pushMappingInternal(mapping, true);
+  }
+
+  private async pushMappingInternal(
+    mapping: GitFolderMapping,
+    retryAfterPull: boolean
+  ): Promise<void> {
+    if (!isComplete(mapping)) return;
     const entry = this.state[mapping.id];
     if (entry?.hasConflicts) return; // block push until conflicts resolved
     try {
@@ -63,6 +73,7 @@ export class SyncEngine {
         this.config.pat,
         this.config.author
       );
+      this.lastPushError.delete(mapping.id);
       if (pushed) {
         const sha = (await this.backend.headSha(mapping)) ?? "";
         this.state[mapping.id] = { lastCommitSha: sha, hasConflicts: false };
@@ -70,15 +81,40 @@ export class SyncEngine {
         await this.emit({ type: "pushed", mappingId: mapping.id, commitSha: sha });
       }
     } catch (err) {
-      // Non-fast-forward: someone else pushed first. Pull and let the next
-      // push cycle retry.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isNonFastForward(msg)) {
-        await this.pullMapping(mapping);
-      } else {
-        await this.emit({ type: "error", message: msg, mappingId: mapping.id });
+      switch (classifyPushError(msg)) {
+        case "diverged":
+          // Someone else pushed first: pull (merge), then push our merge commit.
+          await this.pullMapping(mapping);
+          if (retryAfterPull && !this.state[mapping.id]?.hasConflicts) {
+            await this.pushMappingInternal(mapping, false);
+          }
+          break;
+        case "blocked": {
+          // Permission / branch-protection problem. Local commits are kept, so
+          // nothing is lost — pushes resume automatically once it's fixed.
+          const friendly =
+            `GitHub refused the push for "${mapping.label || mapping.localFolder}". ` +
+            `Check that you have write access to the repo and that the branch ` +
+            `doesn't require pull requests (repo Settings → Branches → allow direct pushes). ` +
+            `Your notes are safe locally and will sync automatically once this is fixed.`;
+          await this.emitPushErrorOnce(mapping, friendly);
+          break;
+        }
+        default:
+          await this.emitPushErrorOnce(mapping, msg);
       }
     }
+  }
+
+  /** Emit a push error only when it changes, so auto-sync doesn't spam notices. */
+  private async emitPushErrorOnce(
+    mapping: GitFolderMapping,
+    message: string
+  ): Promise<void> {
+    if (this.lastPushError.get(mapping.id) === message) return;
+    this.lastPushError.set(mapping.id, message);
+    await this.emit({ type: "error", message, mappingId: mapping.id });
   }
 
   /** Pull all mappings. Called on poll interval. */
@@ -97,6 +133,7 @@ export class SyncEngine {
 
   /** Pull a single mapping and surface any conflicts. */
   async pullMapping(mapping: GitFolderMapping): Promise<void> {
+    if (!isComplete(mapping)) return;
     try {
       const conflictedPaths = await this.backend.pull(
         mapping,
@@ -165,6 +202,7 @@ export class SyncEngine {
   /** Initialise all repos (clone if needed). Call on plugin load. */
   async initAll(): Promise<void> {
     for (const mapping of this.config.mappings) {
+      if (!isComplete(mapping)) continue;
       try {
         await this.backend.init(mapping, this.config.pat);
       } catch (err) {
@@ -222,10 +260,41 @@ export class SyncEngine {
   }
 }
 
-function isNonFastForward(msg: string): boolean {
-  return (
-    msg.includes("non-fast-forward") ||
-    msg.includes("rejected") ||
-    msg.includes("FETCH_HEAD")
-  );
+/** A mapping is only syncable once both the folder and the repo are chosen. */
+function isComplete(mapping: GitFolderMapping): boolean {
+  return !!(mapping.localFolder && mapping.repoUrl);
+}
+
+type PushErrorKind = "diverged" | "blocked" | "other";
+
+/**
+ * Distinguish "someone pushed before us" (pull + retry fixes it) from
+ * "GitHub won't let us push at all" (permissions, protected branch).
+ * Blocked patterns are checked first: protected-branch rejections also
+ * contain the word "rejected".
+ */
+function classifyPushError(msg: string): PushErrorKind {
+  const m = msg.toLowerCase();
+  if (
+    m.includes("protected branch") ||
+    m.includes("hook declined") ||
+    m.includes("pull request") ||
+    m.includes("permission") ||
+    m.includes("not permitted") ||
+    m.includes("unauthorized") ||
+    m.includes("401") ||
+    m.includes("403")
+  ) {
+    return "blocked";
+  }
+  if (
+    m.includes("non-fast-forward") ||
+    m.includes("fetch first") ||
+    m.includes("failed to update ref") ||
+    m.includes("rejected") ||
+    m.includes("fetch_head")
+  ) {
+    return "diverged";
+  }
+  return "other";
 }

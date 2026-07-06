@@ -27,8 +27,8 @@ export const DEFAULT_SETTINGS: ConoteSettings = {
   githubUsername: "",
   author: "",
   mappings: [],
-  pushDebounceSeconds: 10,
-  pullIntervalSeconds: 30,
+  pushDebounceSeconds: 5,
+  pullIntervalSeconds: 15,
   autoSync: true,
 };
 
@@ -146,10 +146,10 @@ export class ConoteSettingTab extends PluginSettingTab {
       b.setButtonText("Sync now").onClick(() => void this.plugin.syncNow())
     );
 
-    // ── Folder mappings ───────────────────────────────────────────────────────
+    // ── Shared folders ────────────────────────────────────────────────────────
     new Setting(containerEl).setName("Shared folders").setHeading();
     containerEl.createEl("p", {
-      text: "Each row maps a vault subfolder to a GitHub repository. The repo is cloned into the plugin's data directory so your vault stays clean.",
+      text: "Pick a folder in your vault and a GitHub repository — syncing starts automatically. To collaborate, invite people to the repo on GitHub (Settings → Collaborators).",
       cls: "setting-item-description",
     });
 
@@ -158,56 +158,53 @@ export class ConoteSettingTab extends PluginSettingTab {
 
       const row1 = wrap.createDiv({ cls: "conote-mapping-row" });
 
-      const labelInput = row1.createEl("input", {
-        type: "text",
-        placeholder: "Label (e.g. ProjectX)",
-      });
-      labelInput.value = mapping.label;
-      labelInput.title = "Human-readable name";
-      labelInput.addEventListener("change", () => {
-        void (async () => {
-          mapping.label = labelInput.value.trim();
-          await this.plugin.saveSettings();
-        })();
-      });
-
       const localInput = row1.createEl("input", {
         type: "text",
-        placeholder: "Vault folder — click to browse",
+        placeholder: "Vault folder — click to choose",
         cls: "conote-picker-trigger",
       });
-      localInput.value = mapping.localFolder;
-      localInput.title = "Click to browse vault folders";
+      localInput.value =
+        mapping.localFolder === "/" ? "Entire vault" : mapping.localFolder;
+      localInput.title = "Click to choose a vault folder";
       localInput.readOnly = true;
       localInput.addEventListener("click", () => {
         new FolderPickerModal(this.app, (path) => {
-          mapping.localFolder = normalizePath(path);
-          localInput.value = mapping.localFolder;
-          void this.plugin.saveSettings();
+          mapping.localFolder = path === "" ? "/" : normalizePath(path);
+          mapping.label =
+            path === ""
+              ? this.app.vault.getName()
+              : mapping.localFolder.split("/").pop() ?? mapping.localFolder;
+          localInput.value =
+            mapping.localFolder === "/" ? "Entire vault" : mapping.localFolder;
+          void this.plugin
+            .saveSettings()
+            .then(() => this.autoConnect(mapping));
         }).open();
       });
 
-      const row2 = wrap.createDiv({ cls: "conote-mapping-row" });
-
-      const repoInput = row2.createEl("input", {
+      const repoInput = row1.createEl("input", {
         type: "text",
-        placeholder: "GitHub repo — click to browse",
+        placeholder: "GitHub repo — click to choose",
         cls: "conote-picker-trigger",
       });
       repoInput.value = mapping.repoUrl;
-      repoInput.title = "Click to browse GitHub repositories";
+      repoInput.title = "Click to choose a GitHub repository";
       repoInput.readOnly = true;
       repoInput.addEventListener("click", () => {
         if (!this.plugin.settings.pat) {
-          new Notice("CoNote Git: add your GitHub PAT first.");
+          new Notice("CoNote: sign in with GitHub first.");
           return;
         }
         new RepoPickerModal(this.app, this.plugin.settings.pat, (url) => {
           mapping.repoUrl = url;
           repoInput.value = url;
-          void this.plugin.saveSettings();
+          void this.plugin
+            .saveSettings()
+            .then(() => this.autoConnect(mapping));
         }).open();
       });
+
+      const row2 = wrap.createDiv({ cls: "conote-mapping-row" });
 
       const branchInput = row2.createEl("input", {
         type: "text",
@@ -215,36 +212,14 @@ export class ConoteSettingTab extends PluginSettingTab {
       });
       branchInput.value = mapping.branch;
       branchInput.addClass("conote-branch-input");
-      branchInput.title = "Branch";
+      branchInput.title = "Branch (leave as \"main\" unless you know you need another)";
       branchInput.addEventListener("change", () => {
         mapping.branch = branchInput.value.trim() || "main";
         void this.plugin.saveSettings();
       });
 
-      const cloneBtn = row2.createEl("button", { text: "Clone / init" });
-      cloneBtn.title = "Clone the repo (or re-verify if already cloned)";
-      cloneBtn.addEventListener("click", () => void (async () => {
-        if (!this.plugin.settings.pat) {
-          new Notice("Conote: add your GitHub PAT first.");
-          return;
-        }
-        cloneBtn.disabled = true;
-        cloneBtn.textContent = "Cloning…";
-        try {
-          await this.plugin.initMapping(mapping);
-          new Notice(`Conote: "${mapping.label || mapping.repoUrl}" ready.`);
-        } catch (err) {
-          new Notice(
-            `Conote: clone failed — ${err instanceof Error ? err.message : String(err)}`,
-            8000
-          );
-        } finally {
-          cloneBtn.disabled = false;
-          cloneBtn.textContent = "Clone / init";
-        }
-      })());
-
       const removeBtn = row2.createEl("button", { text: "Remove" });
+      removeBtn.title = "Stop syncing this folder (nothing is deleted)";
       removeBtn.addEventListener("click", () => {
         this.plugin.settings.mappings.splice(i, 1);
         void this.plugin.saveSettings().then(() => this.display());
@@ -253,9 +228,13 @@ export class ConoteSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).addButton((b) =>
       b
-        .setButtonText("Add folder mapping")
+        .setButtonText("Add shared folder")
         .setCta()
         .onClick(async () => {
+          if (!this.plugin.settings.pat) {
+            new Notice("CoNote: sign in with GitHub first.");
+            return;
+          }
           this.plugin.settings.mappings.push({
             id: crypto.randomUUID(),
             localFolder: "",
@@ -267,5 +246,23 @@ export class ConoteSettingTab extends PluginSettingTab {
           this.display();
         })
     );
+  }
+
+  /** Once a mapping has both sides picked, clone + first pull automatically. */
+  private autoConnect(mapping: GitFolderMapping): void {
+    if (!mapping.localFolder || !mapping.repoUrl) return;
+    const name = mapping.label || mapping.localFolder;
+    new Notice(`CoNote: connecting "${name}"…`);
+    void (async () => {
+      try {
+        await this.plugin.connectMapping(mapping);
+        new Notice(`CoNote: "${name}" is connected and syncing.`);
+      } catch (err) {
+        new Notice(
+          `CoNote: connecting failed — ${err instanceof Error ? err.message : String(err)}`,
+          8000
+        );
+      }
+    })();
   }
 }

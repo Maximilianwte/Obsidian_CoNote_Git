@@ -132,10 +132,17 @@ export default class ConotePlugin extends Plugin {
     );
   }
 
-  /** Expose for settings "Clone / init" button. */
-  async initMapping(mapping: GitFolderMapping): Promise<void> {
-    if (!this.engine) this.rebuildEngine();
-    await this.engine?.initMapping(mapping);
+  /**
+   * Called by settings once a mapping has both a folder and a repo:
+   * clones (or verifies) the repo, does a first pull, and starts syncing.
+   */
+  async connectMapping(mapping: GitFolderMapping): Promise<void> {
+    this.rebuildEngine();
+    if (!this.engine) throw new Error("Sign in with GitHub first.");
+    await this.engine.initMapping(mapping);
+    await this.engine.pullMapping(mapping);
+    this.restartSync();
+    this.decorateFolders();
   }
 
   // ── Vault events ──────────────────────────────────────────────────────────
@@ -157,7 +164,9 @@ export default class ConotePlugin extends Plugin {
 
   private mappingForPath(vaultPath: string): GitFolderMapping | null {
     for (const m of this.settings.mappings) {
+      if (!m.localFolder || !m.repoUrl) continue; // incomplete mapping
       if (
+        m.localFolder === "/" || // entire vault
         vaultPath === m.localFolder ||
         vaultPath.startsWith(m.localFolder + "/")
       ) {
@@ -229,9 +238,9 @@ export default class ConotePlugin extends Plugin {
   async syncNow(): Promise<void> {
     if (!this.engine) {
       if (!this.settings.pat) {
-        new Notice("Conote: add your GitHub PAT in Settings first.");
+        new Notice("CoNote: sign in with GitHub in Settings first.");
       } else {
-        new Notice("Conote: add at least one folder mapping in Settings.");
+        new Notice("CoNote: add at least one shared folder in Settings.");
       }
       return;
     }
@@ -303,9 +312,9 @@ export default class ConotePlugin extends Plugin {
     if (!view.fileItems) return;
 
     for (const mapping of this.settings.mappings) {
-      const folderPath = mapping.localFolder;
-      // Vault root maps to "/" in the file-explorer's fileItems index
-      const itemKey = folderPath === "" ? "/" : folderPath;
+      if (!mapping.localFolder || !mapping.repoUrl) continue;
+      // Vault root ("/") maps to "/" in the file-explorer's fileItems index
+      const itemKey = mapping.localFolder;
       const item = view.fileItems[itemKey];
       if (!item?.el) continue;
       const titleEl = item.el.querySelector<HTMLElement>(".nav-folder-title");
