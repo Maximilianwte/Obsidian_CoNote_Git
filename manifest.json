@@ -1,7 +1,7 @@
 {
   "id": "conote-git",
   "name": "CoNote Git",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "minAppVersion": "1.7.2",
   "description": "Sync individual vault subfolders with collaborators via GitHub — automatic push/pull, no manual commits, with side-by-side conflict resolution.",
   "author": "Maximilian Witte",
