@@ -1,11 +1,11 @@
 // Utilities that are backend-agnostic: hashing, binary detection, path helpers.
 // No GCS / git specifics here.
 
-import * as crypto from "crypto";
+import { nodeCrypto } from "./nodeApi";
 
 /** Stable content hash used to detect whether a file changed. */
 export function hashContent(data: Uint8Array): string {
-  return crypto.createHash("sha256").update(data).digest("hex");
+  return nodeCrypto.createHash("sha256").update(data).digest("hex");
 }
 
 /** Heuristic: treat as binary if a NUL byte appears in the first 8 KB. */

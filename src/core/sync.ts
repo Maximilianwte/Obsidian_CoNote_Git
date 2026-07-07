@@ -10,8 +10,7 @@ import type {
   SyncStateMap,
 } from "./types";
 import { parseConflictMarkers } from "./syncState";
-import * as fs from "fs";
-import * as nodePath from "path";
+import { fs, nodePath } from "./nodeApi";
 
 export interface SyncEngineConfig {
   mappings: GitFolderMapping[];
@@ -239,13 +238,12 @@ export class SyncEngine {
     vaultPath: string
   ): Promise<void> {
     const absPath = nodePath.join(this.vaultBasePath, vaultPath);
-    let fileContent: Buffer;
+    let text: string;
     try {
-      fileContent = fs.readFileSync(absPath);
+      text = fs.readFileSync(absPath).toString("utf8");
     } catch {
       return; // file disappeared, skip
     }
-    const text = fileContent.toString("utf8");
     const parsed = parseConflictMarkers(text);
     if (!parsed) return;
 

@@ -4,7 +4,7 @@ import { PluginSyncStateStore } from "./vaultFileStore";
 import { MergeModal } from "./mergeModal";
 import { GitBackend } from "../core/gitBackend";
 import { SyncEngine } from "../core/sync";
-import * as nodePath from "path";
+import { nodePath } from "../core/nodeApi";
 import type { SyncEvent, SyncStateMap, GitFolderMapping } from "../core/types";
 
 interface PersistedData {

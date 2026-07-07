@@ -6,11 +6,10 @@
 
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/node";
-import * as fs from "fs";
-import * as nodePath from "path";
 import type { IGitBackend } from "./fileStore";
 import type { GitFolderMapping } from "./types";
 import { isBinary, parseConflictMarkers } from "./syncState";
+import { fs, gitFs, nodePath } from "./nodeApi";
 
 export class GitBackend implements IGitBackend {
   /**
@@ -34,11 +33,11 @@ export class GitBackend implements IGitBackend {
     if (alreadyInited) {
       // Verify the remote URL matches; update if not.
       try {
-        const remotes = await git.listRemotes({ fs, dir, gitdir });
+        const remotes = await git.listRemotes({ fs: gitFs, dir, gitdir });
         const origin = remotes.find((r) => r.remote === "origin");
         if (origin && origin.url !== mapping.repoUrl) {
           await git.setConfig({
-            fs, dir, gitdir,
+            fs: gitFs, dir, gitdir,
             path: "remote.origin.url",
             value: mapping.repoUrl,
           });
@@ -51,7 +50,7 @@ export class GitBackend implements IGitBackend {
 
     // Clone into gitdir (separate from worktree).
     await git.clone({
-      fs,
+      fs: gitFs,
       http,
       dir,
       gitdir,
@@ -69,7 +68,7 @@ export class GitBackend implements IGitBackend {
 
     // Fetch latest from origin.
     await git.fetch({
-      fs,
+      fs: gitFs,
       http,
       dir,
       gitdir,
@@ -88,7 +87,7 @@ export class GitBackend implements IGitBackend {
     // Attempt merge.
     try {
       const result = await git.merge({
-        fs,
+        fs: gitFs,
         dir,
         gitdir,
         ours: mapping.branch,
@@ -100,7 +99,7 @@ export class GitBackend implements IGitBackend {
       if (!result.alreadyMerged) {
         // Checkout the merge result into the worktree.
         await git.checkout({
-          fs,
+          fs: gitFs,
           dir,
           gitdir,
           ref: mapping.branch,
@@ -126,11 +125,11 @@ export class GitBackend implements IGitBackend {
     // Stage everything in the worktree. git.add does not stage deletions,
     // so stage those explicitly — otherwise renamed/deleted notes reappear
     // on collaborators' machines.
-    await git.add({ fs, dir, gitdir, filepath: "." });
-    const statusMatrix = await git.statusMatrix({ fs, dir, gitdir });
+    await git.add({ fs: gitFs, dir, gitdir, filepath: "." });
+    const statusMatrix = await git.statusMatrix({ fs: gitFs, dir, gitdir });
     for (const [filepath, head, workdir] of statusMatrix) {
       if (head === 1 && workdir === 0) {
-        await git.remove({ fs, dir, gitdir, filepath });
+        await git.remove({ fs: gitFs, dir, gitdir, filepath });
       }
     }
 
@@ -142,7 +141,7 @@ export class GitBackend implements IGitBackend {
 
     const [name, email] = parseAuthor(author);
     await git.commit({
-      fs,
+      fs: gitFs,
       dir,
       gitdir,
       message: message ?? `Auto-sync from ${author}`,
@@ -150,7 +149,7 @@ export class GitBackend implements IGitBackend {
     });
 
     await git.push({
-      fs,
+      fs: gitFs,
       http,
       dir,
       gitdir,
@@ -178,11 +177,11 @@ export class GitBackend implements IGitBackend {
     fs.writeFileSync(absPath, mergedContent);
 
     // Stage only the resolved file.
-    await git.add({ fs, dir, gitdir, filepath: localPath });
+    await git.add({ fs: gitFs, dir, gitdir, filepath: localPath });
 
     const [name, email] = parseAuthor(author);
     await git.commit({
-      fs,
+      fs: gitFs,
       dir,
       gitdir,
       message: `Resolve conflict in ${localPath}`,
@@ -190,7 +189,7 @@ export class GitBackend implements IGitBackend {
     });
 
     await git.push({
-      fs,
+      fs: gitFs,
       http,
       dir,
       gitdir,
@@ -204,7 +203,7 @@ export class GitBackend implements IGitBackend {
   async isDirty(mapping: GitFolderMapping): Promise<boolean> {
     const { dir, gitdir } = this.paths(mapping);
     try {
-      const matrix = await git.statusMatrix({ fs, dir, gitdir });
+      const matrix = await git.statusMatrix({ fs: gitFs, dir, gitdir });
       return matrix.some(
         ([, head, workdir, stage]) => head !== 1 || workdir !== 1 || stage !== 1
       );
@@ -216,7 +215,7 @@ export class GitBackend implements IGitBackend {
   async headSha(mapping: GitFolderMapping): Promise<string | null> {
     const { dir, gitdir } = this.paths(mapping);
     try {
-      return await git.resolveRef({ fs, dir, gitdir, ref: "HEAD" });
+      return await git.resolveRef({ fs: gitFs, dir, gitdir, ref: "HEAD" });
     } catch {
       return null;
     }
@@ -237,7 +236,7 @@ export class GitBackend implements IGitBackend {
     const { dir, gitdir } = this.paths(mapping);
     try {
       return await git.resolveRef({
-        fs, dir, gitdir,
+        fs: gitFs, dir, gitdir,
         ref: `refs/remotes/origin/${mapping.branch}`,
       });
     } catch {
@@ -257,7 +256,7 @@ export class GitBackend implements IGitBackend {
     // git.statusMatrix after a failed merge marks conflicted files with
     // workdir=2 (modified) or similar. The most reliable approach is to
     // scan for conflict markers in text files.
-    const matrix = await git.statusMatrix({ fs, dir, gitdir });
+    const matrix = await git.statusMatrix({ fs: gitFs, dir, gitdir });
     const conflicted: string[] = [];
 
     for (const [filepath] of matrix) {

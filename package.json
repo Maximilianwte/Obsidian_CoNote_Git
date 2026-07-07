@@ -1,6 +1,6 @@
 {
   "name": "conote-git",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Obsidian plugin to share a folder via Github.",
   "main": "main.js",
   "scripts": {
@@ -19,12 +19,12 @@
   "license": "MIT",
   "devDependencies": {
     "@types/diff": "^5.2.1",
+    "@types/node": "^20.11.0",
     "esbuild": "^0.20.0",
     "obsidian": "^1.4.11",
     "typescript": "^5.4.0"
   },
   "dependencies": {
-    "@types/node": "^20.11.0",
     "diff": "^5.2.0",
     "isomorphic-git": "^1.38.5"
   }
