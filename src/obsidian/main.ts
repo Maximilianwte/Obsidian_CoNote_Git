@@ -299,7 +299,7 @@ export default class ConotePlugin extends Plugin {
   // ── Folder badges ─────────────────────────────────────────────────────────
 
   private clearFolderBadges(): void {
-    document.querySelectorAll(".conote-folder-badge").forEach((el) => el.remove());
+    activeDocument.querySelectorAll(".conote-folder-badge").forEach((el) => el.remove());
   }
 
   private decorateFolders(): void {
