@@ -19,6 +19,7 @@ export default class ConotePlugin extends Plugin {
   private pullTimer: number | null = null;
   private pushTimers = new Map<string, number>();
   private statusEl: HTMLElement | null = null;
+  private pulling = false;
 
   async onload(): Promise<void> {
     await this.loadPersisted();
@@ -62,6 +63,13 @@ export default class ConotePlugin extends Plugin {
       // Re-decorate whenever the file explorer re-renders
       this.registerEvent(
         this.app.workspace.on("layout-change", () => this.decorateFolders())
+      );
+      // Pull immediately when the user switches into a synced folder,
+      // rather than waiting for the next poll tick.
+      this.registerEvent(
+        this.app.workspace.on("file-open", (f) => {
+          if (f && this.mappingForPath(f.path)) void this.runPull();
+        })
       );
     });
   }
@@ -223,14 +231,21 @@ export default class ConotePlugin extends Plugin {
     }
   }
 
+  /** Only pull the mapping the user is currently looking at, to avoid
+   *  needless GitHub traffic for folders that aren't in view. */
   private async runPull(): Promise<void> {
-    if (!this.engine) return;
+    if (!this.engine || this.pulling) return;
+    const activeFile = this.app.workspace.getActiveFile();
+    const mapping = activeFile ? this.mappingForPath(activeFile.path) : null;
+    if (!mapping) return;
+    this.pulling = true;
     this.setStatus("syncing");
     try {
-      await this.engine.pullAll();
+      await this.engine.pullMapping(mapping);
     } catch (e) {
       console.error("Conote: pull failed", e);
     } finally {
+      this.pulling = false;
       this.setStatus("idle");
     }
   }
