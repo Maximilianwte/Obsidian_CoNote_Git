@@ -122,7 +122,11 @@ export default class ConotePlugin extends Plugin {
 
   private rebuildEngine(): void {
     if (!this.isConfigured()) { this.engine = null; return; }
-    const backend = new GitBackend(this.reposBasePath(), this.vaultBasePath());
+    const backend = new GitBackend(
+      this.reposBasePath(),
+      this.vaultBasePath(),
+      this.app.vault.configDir
+    );
     const stateStore = new PluginSyncStateStore(
       async () => this.syncState,
       async (s) => { this.syncState = s; await this.savePersisted(); }

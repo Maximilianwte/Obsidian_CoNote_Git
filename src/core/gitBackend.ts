@@ -16,10 +16,18 @@ export class GitBackend implements IGitBackend {
    * @param reposBasePath  Absolute path to the directory where gitdirs are stored.
    *                       e.g. "/vault/.obsidian/plugins/conote-git/repos"
    * @param vaultBasePath  Absolute path to the vault root.
+   * @param configDirName  Vault's config dir (usually ".obsidian"). When
+   *                       syncing the entire vault, this directory sits
+   *                       inside the worktree — it must be gitignored or
+   *                       every push would recursively stage the plugin's
+   *                       own git data (self-referential) and, critically,
+   *                       every plugin's data.json (including this plugin's
+   *                       own stored GitHub token).
    */
   constructor(
     private readonly reposBasePath: string,
-    private readonly vaultBasePath: string
+    private readonly vaultBasePath: string,
+    private readonly configDirName: string
   ) {}
 
   // ── Public IGitBackend methods ────────────────────────────────────────────
@@ -28,6 +36,7 @@ export class GitBackend implements IGitBackend {
     const { dir, gitdir } = this.paths(mapping);
     fs.mkdirSync(gitdir, { recursive: true });
     fs.mkdirSync(dir, { recursive: true });
+    this.ensureVaultGitignore(mapping, dir);
 
     const alreadyInited = fs.existsSync(nodePath.join(gitdir, "HEAD"));
     if (alreadyInited) {
@@ -121,6 +130,7 @@ export class GitBackend implements IGitBackend {
     message?: string
   ): Promise<boolean> {
     const { dir, gitdir } = this.paths(mapping);
+    this.ensureVaultGitignore(mapping, dir);
 
     // Stage everything in the worktree. git.add does not stage deletions,
     // so stage those explicitly — otherwise renamed/deleted notes reappear
@@ -222,6 +232,28 @@ export class GitBackend implements IGitBackend {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * When syncing the entire vault, ensure the vault's config dir (which
+   * contains this plugin's own git data, other plugins' data.json files,
+   * and this plugin's own stored GitHub token) is excluded from tracking.
+   * Appends to an existing .gitignore rather than overwriting it.
+   */
+  private ensureVaultGitignore(mapping: GitFolderMapping, dir: string): void {
+    if (mapping.localFolder !== "/") return; // configDir only sits inside the worktree for whole-vault syncs
+    const ignoreEntry = `${this.configDirName}/`;
+    const gitignorePath = nodePath.join(dir, ".gitignore");
+
+    let existing = "";
+    if (fs.existsSync(gitignorePath)) {
+      existing = fs.readFileSync(gitignorePath).toString("utf8");
+    }
+    if (existing.split(/\r?\n/).some((line) => line.trim() === ignoreEntry)) return;
+
+    const separator = existing.length && !existing.endsWith("\n") ? "\n" : "";
+    const updated = `${existing}${separator}${ignoreEntry}\n`;
+    fs.writeFileSync(gitignorePath, new TextEncoder().encode(updated));
+  }
 
   paths(mapping: GitFolderMapping): { dir: string; gitdir: string } {
     // localFolder "/" means the entire vault is the worktree.

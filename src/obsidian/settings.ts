@@ -196,6 +196,18 @@ export class ConoteSettingTab extends PluginSettingTab {
           return;
         }
         new RepoPickerModal(this.app, this.plugin.settings.pat, (url) => {
+          const inUseBy = this.plugin.settings.mappings.find(
+            (m) => m.id !== mapping.id && m.repoUrl === url
+          );
+          if (inUseBy) {
+            new Notice(
+              `CoNote: "${inUseBy.label || inUseBy.localFolder}" already syncs this repo. ` +
+              `Each synced folder needs its own repo — mapping two folders to the same one ` +
+              `makes their content collide at the repo root.`,
+              9000
+            );
+            return;
+          }
           mapping.repoUrl = url;
           repoInput.value = url;
           void this.plugin
