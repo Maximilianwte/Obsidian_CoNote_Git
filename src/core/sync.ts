@@ -25,6 +25,16 @@ export class SyncEngine {
   private pulling = false;
   /** Last error emitted per mapping — avoids spamming the same notice every cycle. */
   private lastPushError = new Map<string, string>();
+  /**
+   * Per-mapping queue so push/pull/resolve/init for the same repo never run
+   * concurrently. isomorphic-git has no internal locking, and two operations
+   * writing the same gitdir at once (e.g. a debounced push firing while a
+   * poll-triggered pull is mid-fetch) can corrupt the object store — loose
+   * objects go missing and refs/config reads start failing. This has been
+   * observed in practice on Windows, where the filesystem is less forgiving
+   * of concurrent writes to the same files than macOS/Linux.
+   */
+  private queues = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly backend: IGitBackend,
@@ -36,6 +46,14 @@ export class SyncEngine {
 
   updateConfig(config: SyncEngineConfig): void {
     this.config = config;
+  }
+
+  /** Serialize every git operation for a given mapping — see `queues` above. */
+  private runExclusive<T>(mappingId: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.queues.get(mappingId) ?? Promise.resolve();
+    const result = prior.then(fn, fn);
+    this.queues.set(mappingId, result.catch(() => undefined));
+    return result;
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -56,7 +74,7 @@ export class SyncEngine {
 
   /** Push a single mapping — used when we know exactly which folder changed. */
   async pushMapping(mapping: GitFolderMapping): Promise<void> {
-    await this.pushMappingInternal(mapping, true);
+    await this.runExclusive(mapping.id, () => this.pushMappingInternal(mapping, true));
   }
 
   private async pushMappingInternal(
@@ -84,7 +102,10 @@ export class SyncEngine {
       switch (classifyPushError(msg)) {
         case "diverged":
           // Someone else pushed first: pull (merge), then push our merge commit.
-          await this.pullMapping(mapping);
+          // Calls the lock-free variant directly — pushMappingInternal only
+          // runs from inside runExclusive already, so re-acquiring here
+          // would deadlock against itself.
+          await this.pullMappingInternal(mapping);
           if (retryAfterPull && !this.state[mapping.id]?.hasConflicts) {
             await this.pushMappingInternal(mapping, false);
           }
@@ -132,6 +153,10 @@ export class SyncEngine {
 
   /** Pull a single mapping and surface any conflicts. */
   async pullMapping(mapping: GitFolderMapping): Promise<void> {
+    await this.runExclusive(mapping.id, () => this.pullMappingInternal(mapping));
+  }
+
+  private async pullMappingInternal(mapping: GitFolderMapping): Promise<void> {
     if (!isComplete(mapping)) return;
     try {
       const conflictedPaths = await this.backend.pull(
@@ -179,23 +204,25 @@ export class SyncEngine {
     );
     if (!mapping) return;
 
-    // Repo-relative path from vault-relative.
-    const repoRelPath = conflict.localPath.startsWith(mapping.localFolder + "/")
-      ? conflict.localPath.slice(mapping.localFolder.length + 1)
-      : conflict.localPath;
+    await this.runExclusive(mapping.id, async () => {
+      // Repo-relative path from vault-relative.
+      const repoRelPath = conflict.localPath.startsWith(mapping.localFolder + "/")
+        ? conflict.localPath.slice(mapping.localFolder.length + 1)
+        : conflict.localPath;
 
-    await this.backend.resolveAndPush(
-      mapping,
-      this.config.pat,
-      repoRelPath,
-      mergedContent,
-      this.config.author
-    );
+      await this.backend.resolveAndPush(
+        mapping,
+        this.config.pat,
+        repoRelPath,
+        mergedContent,
+        this.config.author
+      );
 
-    const sha = (await this.backend.headSha(mapping)) ?? "";
-    this.state[mapping.id] = { lastCommitSha: sha, hasConflicts: false };
-    await this.saveState();
-    await this.emit({ type: "pushed", mappingId: mapping.id, commitSha: sha });
+      const sha = (await this.backend.headSha(mapping)) ?? "";
+      this.state[mapping.id] = { lastCommitSha: sha, hasConflicts: false };
+      await this.saveState();
+      await this.emit({ type: "pushed", mappingId: mapping.id, commitSha: sha });
+    });
   }
 
   /** Initialise all repos (clone if needed). Call on plugin load. */
@@ -203,7 +230,7 @@ export class SyncEngine {
     for (const mapping of this.config.mappings) {
       if (!isComplete(mapping)) continue;
       try {
-        await this.backend.init(mapping, this.config.pat);
+        await this.initMapping(mapping);
       } catch (err) {
         await this.emit({
           type: "error",
@@ -218,7 +245,9 @@ export class SyncEngine {
 
   /** Init a single mapping — used when a new one is added in settings. */
   async initMapping(mapping: GitFolderMapping): Promise<void> {
-    await this.backend.init(mapping, this.config.pat);
+    await this.runExclusive(mapping.id, () =>
+      this.backend.init(mapping, this.config.pat)
+    );
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
